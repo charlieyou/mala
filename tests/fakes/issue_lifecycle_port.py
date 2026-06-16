@@ -17,6 +17,7 @@ class FakeIssueLifecyclePort:
     """Dataclass-backed in-memory implementation of IssueLifecyclePort."""
 
     active_tasks: dict[str, asyncio.Task[Any]] = field(default_factory=dict)
+    reserved_issue_ids: set[str] = field(default_factory=set)
     failed_issues: set[str] = field(default_factory=set)
     abort_reason: str | None = None
     _max_issues: int | None = None
@@ -32,6 +33,7 @@ class FakeIssueLifecyclePort:
         )
         return IssueLifecycleState(
             active_issue_ids=frozenset(self.active_tasks),
+            reserved_issue_ids=frozenset(self.reserved_issue_ids),
             failed_issues=frozenset(self.failed_issues),
             abort_requested=self.abort_requested,
             abort_reason=self.abort_reason,
@@ -46,6 +48,7 @@ class FakeIssueLifecyclePort:
                 msg = "mark_failed effect requires issue_id"
                 raise ValueError(msg)
             self.failed_issues.add(effect.issue_id)
+            self.reserved_issue_ids.discard(effect.issue_id)
             return
 
         if effect.kind == "mark_completed":
@@ -53,6 +56,7 @@ class FakeIssueLifecyclePort:
                 msg = "mark_completed effect requires issue_id"
                 raise ValueError(msg)
             self.active_tasks.pop(effect.issue_id, None)
+            self.reserved_issue_ids.discard(effect.issue_id)
             return
 
         if effect.kind == "release_task":
@@ -60,6 +64,21 @@ class FakeIssueLifecyclePort:
                 msg = "release_task effect requires issue_id"
                 raise ValueError(msg)
             self.active_tasks.pop(effect.issue_id, None)
+            self.reserved_issue_ids.discard(effect.issue_id)
+            return
+
+        if effect.kind == "reserve_issue":
+            if effect.issue_id is None:
+                msg = "reserve_issue effect requires issue_id"
+                raise ValueError(msg)
+            self.reserved_issue_ids.add(effect.issue_id)
+            return
+
+        if effect.kind == "release_issue_reservation":
+            if effect.issue_id is None:
+                msg = "release_issue_reservation effect requires issue_id"
+                raise ValueError(msg)
+            self.reserved_issue_ids.discard(effect.issue_id)
             return
 
         if effect.kind == "request_abort":

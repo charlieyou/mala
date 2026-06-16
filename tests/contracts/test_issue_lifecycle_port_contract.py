@@ -103,6 +103,9 @@ async def test_state_snapshot_reflects_task_failure_abort_and_limit(
 
     try:
         lifecycle_port.apply_effect(
+            IssueLifecycleEffect(kind="reserve_issue", issue_id="issue-reserved")
+        )
+        lifecycle_port.apply_effect(
             IssueLifecycleEffect(kind="mark_failed", issue_id="issue-failed")
         )
         lifecycle_port.apply_effect(
@@ -115,6 +118,7 @@ async def test_state_snapshot_reflects_task_failure_abort_and_limit(
         state = lifecycle_port.current_state
 
         assert state.active_issue_ids == frozenset({"issue-active"})
+        assert state.reserved_issue_ids == frozenset({"issue-reserved"})
         assert state.failed_issues == frozenset({"issue-failed"})
         assert state.abort_requested is True
         assert state.abort_reason == "fatal error"
@@ -132,7 +136,7 @@ async def test_state_snapshot_reflects_task_failure_abort_and_limit(
 async def test_completion_and_release_effects_remove_active_tasks(
     lifecycle_port: IssueLifecyclePort,
 ) -> None:
-    """Terminal task effects remove the issue from active task tracking."""
+    """Terminal task effects remove active tracking and reservations."""
 
     async def wait_forever() -> None:
         await asyncio.Event().wait()
@@ -141,6 +145,15 @@ async def test_completion_and_release_effects_remove_active_tasks(
     released_task = asyncio.create_task(wait_forever())
     lifecycle_port.active_tasks["issue-complete"] = completed_task
     lifecycle_port.active_tasks["issue-release"] = released_task
+    lifecycle_port.apply_effect(
+        IssueLifecycleEffect(kind="reserve_issue", issue_id="issue-complete")
+    )
+    lifecycle_port.apply_effect(
+        IssueLifecycleEffect(kind="reserve_issue", issue_id="issue-release")
+    )
+    lifecycle_port.apply_effect(
+        IssueLifecycleEffect(kind="reserve_issue", issue_id="issue-reserved")
+    )
 
     try:
         lifecycle_port.apply_effect(
@@ -149,8 +162,14 @@ async def test_completion_and_release_effects_remove_active_tasks(
         lifecycle_port.apply_effect(
             IssueLifecycleEffect(kind="release_task", issue_id="issue-release")
         )
+        lifecycle_port.apply_effect(
+            IssueLifecycleEffect(
+                kind="release_issue_reservation", issue_id="issue-reserved"
+            )
+        )
 
         assert lifecycle_port.current_state.active_issue_ids == frozenset()
+        assert lifecycle_port.current_state.reserved_issue_ids == frozenset()
     finally:
         completed_task.cancel()
         released_task.cancel()

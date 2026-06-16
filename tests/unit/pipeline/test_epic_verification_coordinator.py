@@ -654,3 +654,149 @@ class TestEpicVerificationInterruptHandling:
 
         # Verify flow parameter was passed as "epic_remediation"
         assert captured_flows == ["epic_remediation"]
+
+    @pytest.mark.asyncio
+    async def test_inline_remediation_reserves_issue_until_finalized(
+        self,
+        callbacks: EpicVerificationHarness,
+        run_metadata: MagicMock,
+    ) -> None:
+        """Inline remediation reserves its issue so the main queue cannot duplicate it."""
+        reservation_seen_at_spawn: list[bool] = []
+        reservation_seen_at_finalize: list[bool] = []
+
+        async def spawn_remediation(
+            issue_id: str, flow: str = "implementer"
+        ) -> asyncio.Task[IssueResult]:
+            del flow
+            reservation_seen_at_spawn.append(
+                issue_id in callbacks.issue_lifecycle.reserved_issue_ids
+            )
+
+            async def work() -> IssueResult:
+                return make_issue_result(issue_id)
+
+            return asyncio.create_task(work())
+
+        async def finalize_remediation(
+            issue_id: str, result: IssueResult, run_metadata: object
+        ) -> None:
+            del result, run_metadata
+            reservation_seen_at_finalize.append(
+                issue_id in callbacks.issue_lifecycle.reserved_issue_ids
+            )
+
+        callbacks.spawn_epic_remediation_mock = AsyncMock(side_effect=spawn_remediation)
+        callbacks.finalize_epic_remediation_mock = AsyncMock(
+            side_effect=finalize_remediation
+        )
+        callbacks.verify_epic = AsyncMock(
+            side_effect=[
+                make_verification_result(
+                    failed_count=1,
+                    remediation_issues=["rem-1"],
+                ),
+                make_verification_result(
+                    passed_count=1,
+                    failed_count=0,
+                ),
+            ]
+        )
+
+        coordinator = callbacks.to_coordinator(max_retries=1)
+
+        await coordinator.check_epic_closure("issue-1", run_metadata)
+
+        assert reservation_seen_at_spawn == [True]
+        assert reservation_seen_at_finalize == [True]
+        assert "rem-1" not in callbacks.issue_lifecycle.reserved_issue_ids
+
+    @pytest.mark.parametrize("owned_state", ["active", "reserved"])
+    @pytest.mark.asyncio
+    async def test_inline_remediation_does_not_spawn_already_owned_issue(
+        self,
+        callbacks: EpicVerificationHarness,
+        run_metadata: MagicMock,
+        owned_state: str,
+    ) -> None:
+        """Inline remediation stops when another owner already has the issue."""
+        active_task: asyncio.Task[None] | None = None
+        if owned_state == "active":
+
+            async def wait_forever() -> None:
+                await asyncio.Event().wait()
+
+            active_task = asyncio.create_task(wait_forever())
+            callbacks.issue_lifecycle.active_tasks["rem-1"] = active_task
+        else:
+            callbacks.issue_lifecycle.reserved_issue_ids.add("rem-1")
+
+        callbacks.verify_epic = AsyncMock(
+            side_effect=[
+                make_verification_result(
+                    failed_count=1,
+                    remediation_issues=["rem-1"],
+                ),
+                make_verification_result(
+                    passed_count=1,
+                    failed_count=0,
+                ),
+            ]
+        )
+        coordinator = callbacks.to_coordinator(max_retries=1)
+
+        try:
+            await coordinator.check_epic_closure("issue-1", run_metadata)
+        finally:
+            if active_task is not None:
+                active_task.cancel()
+                await asyncio.gather(active_task, return_exceptions=True)
+
+        callbacks.spawn_epic_remediation_mock.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_inline_remediation_cancels_child_task_on_outer_cancellation(
+        self,
+        callbacks: EpicVerificationHarness,
+        run_metadata: MagicMock,
+    ) -> None:
+        """Cancelling epic verification cancels the untracked remediation task."""
+        child_cancelled = asyncio.Event()
+        child_started = asyncio.Event()
+
+        async def spawn_remediation(
+            issue_id: str, flow: str = "implementer"
+        ) -> asyncio.Task[IssueResult]:
+            del flow
+
+            async def work() -> IssueResult:
+                child_started.set()
+                try:
+                    await asyncio.Event().wait()
+                except asyncio.CancelledError:
+                    child_cancelled.set()
+                    raise
+                return make_issue_result(issue_id)
+
+            return asyncio.create_task(work())
+
+        callbacks.spawn_epic_remediation_mock = AsyncMock(side_effect=spawn_remediation)
+        callbacks.verify_epic = AsyncMock(
+            return_value=make_verification_result(
+                failed_count=1,
+                remediation_issues=["rem-1"],
+            )
+        )
+        coordinator = callbacks.to_coordinator(max_retries=1)
+
+        verification_task = asyncio.create_task(
+            coordinator.check_epic_closure("issue-1", run_metadata)
+        )
+        await asyncio.wait_for(child_started.wait(), timeout=0.2)
+
+        verification_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await verification_task
+
+        assert child_cancelled.is_set()
+        assert "rem-1" not in callbacks.issue_lifecycle.reserved_issue_ids

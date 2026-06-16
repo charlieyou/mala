@@ -66,6 +66,33 @@ class MockIssueProvider:
         return []
 
 
+class IgnoreExcludeIssueProvider(MockIssueProvider):
+    """Provider that returns configured issues even if they are excluded."""
+
+    async def get_ready_async(
+        self,
+        exclude_ids: set[str] | None = None,
+        epic_id: str | None = None,
+        only_ids: list[str] | None = None,
+        suppress_warn_ids: set[str] | None = None,
+        include_wip: bool = False,
+        focus: bool = True,
+        orphans_only: bool = False,
+        order_preference: OrderPreference = OrderPreference.FOCUS,
+    ) -> list[str]:
+        """Return next sequence without applying exclude_ids."""
+        del exclude_ids, epic_id, suppress_warn_ids, include_wip, focus
+        del orphans_only, order_preference
+        if self._call_count < len(self._ready_sequences):
+            result = list(self._ready_sequences[self._call_count])
+            if only_ids is not None:
+                allowed = set(only_ids)
+                result = [issue_id for issue_id in result if issue_id in allowed]
+            self._call_count += 1
+            return result
+        return []
+
+
 class MockEventSink:
     """Mock event sink for testing."""
 
@@ -351,6 +378,69 @@ class TestRunLoop:
         # (verified by issues_spawned == 0 above and no completed_ids)
         assert coord.completed_ids == set()
         assert ("no_more_issues", ("none_ready",)) in event_sink.events
+
+    @pytest.mark.asyncio
+    async def test_reserved_issue_is_not_spawned_even_if_polled_ready(
+        self, event_sink: MockEventSink
+    ) -> None:
+        """A scheduler-only reservation prevents duplicate issue execution."""
+        beads = IgnoreExcludeIssueProvider(ready_issues=[["issue-1"], []])
+        coord = IssueExecutionCoordinator(
+            beads=beads,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            event_sink=event_sink,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            config=CoordinatorConfig(),
+        )
+        coord.reserve_issue("issue-1")
+        spawned: list[str] = []
+
+        async def spawn_callback(issue_id: str) -> asyncio.Task[None] | None:
+            spawned.append(issue_id)
+            return None
+
+        result = await coord.run_loop(spawn_callback, AsyncMock(), AsyncMock())
+
+        assert result.issues_spawned == 0
+        assert spawned == []
+        assert coord.reserved_issue_ids == {"issue-1"}
+
+    @pytest.mark.asyncio
+    async def test_spawn_reserves_issue_while_claiming(
+        self, event_sink: MockEventSink
+    ) -> None:
+        """Main-loop spawning reserves the issue during async claim/spawn work."""
+        coord = IssueExecutionCoordinator(
+            beads=MockIssueProvider(),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            event_sink=event_sink,  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            config=CoordinatorConfig(),
+        )
+        spawn_started = asyncio.Event()
+        finish_spawn = asyncio.Event()
+
+        async def spawn_callback(issue_id: str) -> asyncio.Task[None] | None:
+            assert issue_id in coord.current_state.reserved_issue_ids
+            spawn_started.set()
+            await finish_spawn.wait()
+
+            async def work() -> None:
+                pass
+
+            return asyncio.create_task(work())
+
+        spawn_task = asyncio.create_task(
+            coord._spawn_ready_issues(["issue-1"], 1, spawn_callback)
+        )
+
+        await asyncio.wait_for(spawn_started.wait(), timeout=0.2)
+        assert coord.current_state.reserved_issue_ids == frozenset({"issue-1"})
+
+        finish_spawn.set()
+        spawned, remaining = await asyncio.wait_for(spawn_task, timeout=0.2)
+
+        assert spawned == 1
+        assert remaining == []
+        assert "issue-1" in coord.active_tasks
+        assert "issue-1" not in coord.reserved_issue_ids
+        await asyncio.gather(*coord.active_tasks.values())
 
     @pytest.mark.asyncio
     async def test_repolls_after_finalization_creates_follow_up_work(

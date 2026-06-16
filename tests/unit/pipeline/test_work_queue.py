@@ -97,6 +97,7 @@ def test_snapshot_freezes_coordinator_state_and_defaults_completed_count() -> No
 
     snapshot = queue.snapshot(
         active_issue_ids={"active-1"},
+        reserved_issue_ids={"reserved-1"},
         completed_issue_ids={"done-1", "done-2"},
         failed_issue_ids={"failed-1"},
         ready_issue_ids=["ready-1"],
@@ -106,6 +107,7 @@ def test_snapshot_freezes_coordinator_state_and_defaults_completed_count() -> No
 
     assert snapshot.ready_issue_ids == ("ready-1",)
     assert snapshot.active_issue_ids == frozenset({"active-1"})
+    assert snapshot.reserved_issue_ids == frozenset({"reserved-1"})
     assert snapshot.completed_count == 2
     assert snapshot.max_agents == 2
     assert snapshot.max_issues == 5
@@ -120,6 +122,7 @@ async def test_poll_fetches_ready_issues_and_resets_failures() -> None:
     queue = make_queue(provider, strategy)
     snapshot = queue.snapshot(
         active_issue_ids={"active-1"},
+        reserved_issue_ids={"reserved-1"},
         completed_issue_ids={"done-1"},
         failed_issue_ids={"failed-1"},
         consecutive_poll_failures=2,
@@ -133,10 +136,15 @@ async def test_poll_fetches_ready_issues_and_resets_failures() -> None:
     assert result.consecutive_poll_failures == 0
     assert provider.calls == [
         {
-            "exclude_ids": {"failed-1", "done-1"},
+            "exclude_ids": {"failed-1", "reserved-1", "done-1"},
             "epic_id": "epic-1",
             "only_ids": ["issue-1", "issue-2"],
-            "suppress_warn_ids": {"active-1", "failed-1", "done-1"},
+            "suppress_warn_ids": {
+                "active-1",
+                "failed-1",
+                "reserved-1",
+                "done-1",
+            },
             "include_wip": True,
             "focus": False,
             "orphans_only": True,

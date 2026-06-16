@@ -445,51 +445,83 @@ class EpicVerificationCoordinator:
                     )
                 return
 
-            try:
-                task = await self.remediation_port.spawn_epic_remediation(
-                    issue_id, "epic_remediation"
-                )
-            except Exception as e:
+            lifecycle_state = self.issue_lifecycle.current_state
+            if issue_id in lifecycle_state.active_issue_ids:
                 if remaining:
                     self.event_sink.on_warning(
-                        f"Stopping remediation chain: failed to spawn {issue_id}: {e}; "
+                        f"Stopping remediation chain: {issue_id} already active; "
                         f"{len(remaining)} downstream issue(s) remain blocked"
                     )
                 return
-
-            if not task:
+            if issue_id in lifecycle_state.reserved_issue_ids:
                 if remaining:
                     self.event_sink.on_warning(
-                        f"Stopping remediation chain: no task for {issue_id}; "
+                        f"Stopping remediation chain: {issue_id} already reserved; "
                         f"{len(remaining)} downstream issue(s) remain blocked"
                     )
                 return
-
-            result = await self._wait_for_task(task, issue_id, interrupt_event)
-
-            try:
-                await self.remediation_port.finalize_epic_remediation(
-                    issue_id, result, run_metadata
-                )
-            except asyncio.CancelledError:
-                raise
-            except Exception as e:
-                self.event_sink.on_warning(
-                    f"Failed to finalize remediation result for {issue_id} "
-                    f"(agent: {result.agent_id}): {e}",
-                )
 
             self.issue_lifecycle.apply_effect(
-                IssueLifecycleEffect(kind="mark_completed", issue_id=issue_id)
+                IssueLifecycleEffect(kind="reserve_issue", issue_id=issue_id)
             )
-
-            if not result.success:
-                if remaining:
-                    self.event_sink.on_warning(
-                        f"Stopping remediation chain: {issue_id} failed; "
-                        f"{len(remaining)} downstream issue(s) remain blocked"
+            task: asyncio.Task[IssueResult] | None = None
+            try:
+                try:
+                    task = await self.remediation_port.spawn_epic_remediation(
+                        issue_id, "epic_remediation"
                     )
-                return
+                except Exception as e:
+                    if remaining:
+                        self.event_sink.on_warning(
+                            f"Stopping remediation chain: failed to spawn {issue_id}: {e}; "
+                            f"{len(remaining)} downstream issue(s) remain blocked"
+                        )
+                    return
+
+                if not task:
+                    if remaining:
+                        self.event_sink.on_warning(
+                            f"Stopping remediation chain: no task for {issue_id}; "
+                            f"{len(remaining)} downstream issue(s) remain blocked"
+                        )
+                    return
+
+                result = await self._wait_for_task(task, issue_id, interrupt_event)
+
+                try:
+                    await self.remediation_port.finalize_epic_remediation(
+                        issue_id, result, run_metadata
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    self.event_sink.on_warning(
+                        f"Failed to finalize remediation result for {issue_id} "
+                        f"(agent: {result.agent_id}): {e}",
+                    )
+
+                self.issue_lifecycle.apply_effect(
+                    IssueLifecycleEffect(kind="mark_completed", issue_id=issue_id)
+                )
+
+                if not result.success:
+                    if remaining:
+                        self.event_sink.on_warning(
+                            f"Stopping remediation chain: {issue_id} failed; "
+                            f"{len(remaining)} downstream issue(s) remain blocked"
+                        )
+                    return
+            except asyncio.CancelledError:
+                if task is not None and not task.done():
+                    task.cancel()
+                    await asyncio.wait([task], timeout=REMEDIATION_CANCEL_GRACE_SECONDS)
+                raise
+            finally:
+                self.issue_lifecycle.apply_effect(
+                    IssueLifecycleEffect(
+                        kind="release_issue_reservation", issue_id=issue_id
+                    )
+                )
 
     async def _wait_for_task(
         self,

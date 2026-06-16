@@ -17,6 +17,8 @@ IssueLifecycleEffectKind = Literal[
     "mark_failed",
     "mark_completed",
     "release_task",
+    "reserve_issue",
+    "release_issue_reservation",
     "request_abort",
     "set_max_issues",
     "set_interrupt_event",
@@ -28,6 +30,7 @@ class IssueLifecycleState:
     """Dataclass snapshot of lifecycle state exposed by IssueLifecyclePort."""
 
     active_issue_ids: frozenset[str]
+    reserved_issue_ids: frozenset[str]
     failed_issues: frozenset[str]
     abort_requested: bool
     abort_reason: str | None

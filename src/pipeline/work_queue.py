@@ -89,6 +89,7 @@ class WorkQueueSnapshot:
 
     ready_issue_ids: tuple[str, ...] = ()
     active_issue_ids: frozenset[str] = field(default_factory=frozenset)
+    reserved_issue_ids: frozenset[str] = field(default_factory=frozenset)
     completed_issue_ids: frozenset[str] = field(default_factory=frozenset)
     failed_issue_ids: frozenset[str] = field(default_factory=frozenset)
     completed_count: int = 0
@@ -217,6 +218,7 @@ class WorkQueue:
         self,
         *,
         active_issue_ids: set[str] | frozenset[str] = frozenset(),
+        reserved_issue_ids: set[str] | frozenset[str] = frozenset(),
         completed_issue_ids: set[str] | frozenset[str] = frozenset(),
         failed_issue_ids: set[str] | frozenset[str] = frozenset(),
         ready_issue_ids: list[str] | tuple[str, ...] = (),
@@ -237,6 +239,7 @@ class WorkQueue:
         return WorkQueueSnapshot(
             ready_issue_ids=tuple(ready_issue_ids),
             active_issue_ids=frozenset(active_issue_ids),
+            reserved_issue_ids=frozenset(reserved_issue_ids),
             completed_issue_ids=completed,
             failed_issue_ids=frozenset(failed_issue_ids),
             completed_count=(
@@ -300,11 +303,16 @@ class WorkQueue:
         return (
             set(snapshot.failed_issue_ids)
             | set(snapshot.active_issue_ids)
+            | set(snapshot.reserved_issue_ids)
             | set(snapshot.completed_issue_ids)
         )
 
     async def _fetch_ready_issue_ids(self, snapshot: WorkQueueSnapshot) -> list[str]:
-        exclude_ids = set(snapshot.failed_issue_ids | snapshot.completed_issue_ids)
+        exclude_ids = set(
+            snapshot.failed_issue_ids
+            | snapshot.reserved_issue_ids
+            | snapshot.completed_issue_ids
+        )
         suppress_warn_ids = self._suppress_warn_ids(snapshot)
         ready_issue_ids = await self._issue_provider.get_ready_async(
             exclude_ids,
@@ -365,6 +373,7 @@ def capacity_decision(snapshot: WorkQueueSnapshot) -> CapacityDecision:
             issue_id
             for issue_id in snapshot.ready_issue_ids
             if issue_id not in snapshot.active_issue_ids
+            and issue_id not in snapshot.reserved_issue_ids
         ]
     )
     agent_capacity = spawnable_ready_count

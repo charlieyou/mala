@@ -47,6 +47,7 @@ class FakeIssueCoordinator:
     def current_state(self) -> IssueLifecycleState:
         return IssueLifecycleState(
             active_issue_ids=frozenset(self.active_issue_ids),
+            reserved_issue_ids=frozenset(),
             failed_issues=frozenset(),
             abort_requested=False,
             abort_reason=self.abort_reason,

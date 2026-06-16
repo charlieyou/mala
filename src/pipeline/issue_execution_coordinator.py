@@ -248,6 +248,7 @@ class IssueExecutionCoordinator:
 
         # Runtime state
         self.active_tasks: dict[str, asyncio.Task[Any]] = {}
+        self.reserved_issue_ids: set[str] = set()
         self.completed_ids: set[str] = set()
         self.failed_issues: set[str] = set()
         self.abort_run: bool = False
@@ -260,6 +261,7 @@ class IssueExecutionCoordinator:
         """Return a snapshot of issue lifecycle state."""
         return IssueLifecycleState(
             active_issue_ids=frozenset(self.active_tasks),
+            reserved_issue_ids=frozenset(self.reserved_issue_ids),
             failed_issues=frozenset(self.failed_issues),
             abort_requested=self.abort_run,
             abort_reason=self.abort_reason,
@@ -288,6 +290,20 @@ class IssueExecutionCoordinator:
                 msg = "release_task effect requires issue_id"
                 raise ValueError(msg)
             self.release_task(effect.issue_id)
+            return
+
+        if effect.kind == "reserve_issue":
+            if effect.issue_id is None:
+                msg = "reserve_issue effect requires issue_id"
+                raise ValueError(msg)
+            self.reserve_issue(effect.issue_id)
+            return
+
+        if effect.kind == "release_issue_reservation":
+            if effect.issue_id is None:
+                msg = "release_issue_reservation effect requires issue_id"
+                raise ValueError(msg)
+            self.release_issue_reservation(effect.issue_id)
             return
 
         if effect.kind == "request_abort":
@@ -657,6 +673,7 @@ class IssueExecutionCoordinator:
     ) -> WorkQueueSnapshot:
         snapshot = work_queue.snapshot(
             active_issue_ids=set(self.active_tasks),
+            reserved_issue_ids=self.reserved_issue_ids,
             completed_issue_ids=self.completed_ids,
             failed_issue_ids=self.failed_issues,
             ready_issue_ids=ready_issue_ids,
@@ -780,13 +797,17 @@ class IssueExecutionCoordinator:
         remaining = list(ready)
         while remaining and spawned < capacity:
             issue_id = remaining.pop(0)
-            if issue_id in self.active_tasks:
+            if issue_id in self.active_tasks or issue_id in self.reserved_issue_ids:
                 continue
-            task = await spawn_callback(issue_id)
-            if task is None:
-                continue
-            self.register_task(issue_id, task)
-            spawned += 1
+            self.reserved_issue_ids.add(issue_id)
+            try:
+                task = await spawn_callback(issue_id)
+                if task is None:
+                    continue
+                self.register_task(issue_id, task)
+                spawned += 1
+            finally:
+                self.reserved_issue_ids.discard(issue_id)
         return spawned, remaining
 
     async def _wait_for_agent_completion(
@@ -928,6 +949,7 @@ class IssueExecutionCoordinator:
             issue_id: The issue ID that failed.
         """
         self.failed_issues.add(issue_id)
+        self.reserved_issue_ids.discard(issue_id)
         logger.info("Issue marked failed: issue_id=%s", issue_id)
 
     def mark_completed(self, issue_id: str) -> None:
@@ -938,6 +960,7 @@ class IssueExecutionCoordinator:
         """
         self.completed_ids.add(issue_id)
         self.active_tasks.pop(issue_id, None)
+        self.reserved_issue_ids.discard(issue_id)
         logger.debug("Issue marked completed: issue_id=%s", issue_id)
 
     def release_task(self, issue_id: str) -> None:
@@ -950,4 +973,29 @@ class IssueExecutionCoordinator:
             issue_id: The issue ID whose active task should be released.
         """
         self.active_tasks.pop(issue_id, None)
+        self.reserved_issue_ids.discard(issue_id)
         logger.debug("Issue released for retry: issue_id=%s", issue_id)
+
+    def reserve_issue(self, issue_id: str) -> None:
+        """Reserve an externally owned in-flight issue without finalizing its task.
+
+        Inline epic remediation owns its task outside the main coordinator loop,
+        but the scheduler still needs to know the issue is in flight so it does
+        not spawn a duplicate worker for the same beads issue.
+
+        Args:
+            issue_id: The issue ID to reserve from normal scheduling.
+        """
+        if issue_id in self.completed_ids or issue_id in self.failed_issues:
+            return
+        self.reserved_issue_ids.add(issue_id)
+        logger.debug("Issue reserved: issue_id=%s", issue_id)
+
+    def release_issue_reservation(self, issue_id: str) -> None:
+        """Release a scheduler-only issue reservation.
+
+        Args:
+            issue_id: The issue ID whose reservation should be released.
+        """
+        self.reserved_issue_ids.discard(issue_id)
+        logger.debug("Issue reservation released: issue_id=%s", issue_id)

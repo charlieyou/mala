@@ -54,6 +54,14 @@ def test_decision_and_queue_shapes_are_dataclasses() -> None:
         ),
         (
             WorkQueueSnapshot(
+                ready_issue_ids=("reserved", "open"),
+                reserved_issue_ids=frozenset({"reserved"}),
+                max_agents=3,
+            ),
+            1,
+        ),
+        (
+            WorkQueueSnapshot(
                 ready_issue_ids=("a", "b", "c"),
                 completed_count=4,
                 max_issues=5,
