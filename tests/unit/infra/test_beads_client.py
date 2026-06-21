@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from src.core.models import ClaimOutcome
 from src.infra.clients.beads_client import BeadsClient
 from src.infra.tools.command_runner import CommandResult
 
@@ -2159,7 +2160,7 @@ class TestGetBlockedCountAsync:
         beads = BeadsClient(tmp_path)
         captured_cmds: list[list[str]] = []
 
-        async def capturing_run(cmd: list[str]) -> CommandResult:
+        async def capturing_run(cmd: list[str], **_kwargs: object) -> CommandResult:
             captured_cmds.append(cmd)
             return make_command_result(stdout="[]")
 
@@ -2185,8 +2186,8 @@ class TestClaimAsync:
     """Test claim_async method."""
 
     @pytest.mark.asyncio
-    async def test_returns_true_on_success(self, tmp_path: Path) -> None:
-        """Should return True when claim succeeds."""
+    async def test_returns_claimed_on_success(self, tmp_path: Path) -> None:
+        """Should report CLAIMED when claim succeeds."""
         beads = BeadsClient(tmp_path)
 
         with pytest.MonkeyPatch.context() as mp:
@@ -2197,22 +2198,49 @@ class TestClaimAsync:
             )
             result = await beads.claim_async("issue-1")
 
-        assert result is True
+        assert result.ok is True
+        assert result.outcome is ClaimOutcome.CLAIMED
 
     @pytest.mark.asyncio
-    async def test_returns_false_on_failure(self, tmp_path: Path) -> None:
-        """Should return False when claim fails."""
+    async def test_reports_blocked_with_parsed_blockers(self, tmp_path: Path) -> None:
+        """A 'cannot claim blocked issue' error is classified as BLOCKED."""
+        beads = BeadsClient(tmp_path)
+        stderr = (
+            "Error: Validation failed: claim: cannot claim blocked issue: "
+            "engine-a.1, engine-a"
+        )
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                beads,
+                "_run_subprocess_async",
+                AsyncMock(
+                    return_value=make_command_result(returncode=1, stderr=stderr)
+                ),
+            )
+            result = await beads.claim_async("issue-1")
+
+        assert result.ok is False
+        assert result.outcome is ClaimOutcome.BLOCKED
+        assert result.blockers == ("engine-a.1", "engine-a")
+
+    @pytest.mark.asyncio
+    async def test_reports_failed_on_other_error(self, tmp_path: Path) -> None:
+        """A non-blocked error is classified as FAILED."""
         beads = BeadsClient(tmp_path)
 
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr(
                 beads,
                 "_run_subprocess_async",
-                AsyncMock(return_value=make_command_result(returncode=1)),
+                AsyncMock(
+                    return_value=make_command_result(returncode=1, stderr="boom")
+                ),
             )
             result = await beads.claim_async("issue-1")
 
-        assert result is False
+        assert result.ok is False
+        assert result.outcome is ClaimOutcome.FAILED
 
     @pytest.mark.asyncio
     async def test_retries_transient_timestamp_validation_failure(
@@ -2236,7 +2264,7 @@ class TestClaimAsync:
             mp.setattr(asyncio, "sleep", mock_sleep)
             result = await beads.claim_async("issue-1")
 
-        assert result is True
+        assert result.ok is True
         assert mock_run.await_count == 2
         mock_sleep.assert_awaited_once_with(1.0)
 
@@ -2259,7 +2287,7 @@ class TestClaimAsync:
             mp.setattr(asyncio, "sleep", mock_sleep)
             result = await beads.claim_async("issue-1")
 
-        assert result is False
+        assert result.ok is False
         assert mock_run.await_count == 5
         assert [args.args[0] for args in mock_sleep.await_args_list] == [
             1.0,
@@ -2267,6 +2295,100 @@ class TestClaimAsync:
             4.0,
             8.0,
         ]
+
+
+class TestFetchBlockedIdsAsync:
+    """Test fetch_blocked_ids_async method."""
+
+    @pytest.mark.asyncio
+    async def test_returns_ids_with_blocked_by(self, tmp_path: Path) -> None:
+        """Should return IDs of records that carry a blocked_by field."""
+        beads = BeadsClient(tmp_path)
+        blocked_json = json.dumps(
+            [
+                {"id": "task-1", "blocked_by": ["epic-1"]},
+                {"id": "epic-1", "blocked_by": ["other"]},
+            ]
+        )
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                beads,
+                "_run_subprocess_async",
+                AsyncMock(return_value=make_command_result(stdout=blocked_json)),
+            )
+            result = await beads.fetch_blocked_ids_async()
+
+        assert result == {"task-1", "epic-1"}
+
+    @pytest.mark.asyncio
+    async def test_ignores_records_without_blocked_by(self, tmp_path: Path) -> None:
+        """Ready-shaped records (no blocked_by) must not be treated as blocked."""
+        beads = BeadsClient(tmp_path)
+        ready_shaped = json.dumps([{"id": "task-1", "issue_type": "task"}])
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                beads,
+                "_run_subprocess_async",
+                AsyncMock(return_value=make_command_result(stdout=ready_shaped)),
+            )
+            result = await beads.fetch_blocked_ids_async()
+
+        assert result == set()
+
+    @pytest.mark.asyncio
+    async def test_returns_empty_on_failure(self, tmp_path: Path) -> None:
+        """Should fail open (empty set) when br blocked errors."""
+        beads = BeadsClient(tmp_path)
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                beads,
+                "_run_subprocess_async",
+                AsyncMock(
+                    return_value=make_command_result(returncode=1, stderr="boom")
+                ),
+            )
+            result = await beads.fetch_blocked_ids_async()
+
+        assert result == set()
+
+
+class TestGetReadyDropsBlockedIds:
+    """get_ready_async excludes issues beads reports as blocked."""
+
+    @pytest.mark.asyncio
+    async def test_blocked_ready_issue_is_dropped(self, tmp_path: Path) -> None:
+        """A task returned by br ready but listed by br blocked is excluded."""
+        beads = BeadsClient(tmp_path)
+
+        ready_json = json.dumps(
+            [
+                {"id": "task-1", "issue_type": "task", "priority": 1},
+                {"id": "task-2", "issue_type": "task", "priority": 1},
+            ]
+        )
+        blocked_json = json.dumps([{"id": "task-2", "blocked_by": ["epic-1"]}])
+
+        async def fake_run(
+            cmd: list[str], *args: object, **kwargs: object
+        ) -> CommandResult:
+            if "blocked" in cmd:
+                return make_command_result(stdout=blocked_json)
+            return make_command_result(stdout=ready_json)
+
+        async def mock_get_parent_epics(
+            issue_ids: list[str],
+        ) -> dict[str, str | None]:
+            return {issue_id: None for issue_id in issue_ids}
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(beads, "_run_subprocess_async", fake_run)
+            mp.setattr(beads, "get_parent_epics_async", mock_get_parent_epics)
+            result = await beads.get_ready_async()
+
+        assert result == ["task-1"]
 
 
 class TestResetAsync:
@@ -2278,7 +2400,7 @@ class TestResetAsync:
         beads = BeadsClient(tmp_path)
         captured_cmds: list[list[str]] = []
 
-        async def capturing_run(cmd: list[str]) -> CommandResult:
+        async def capturing_run(cmd: list[str], **_kwargs: object) -> CommandResult:
             captured_cmds.append(cmd)
             return make_command_result()
 
@@ -2296,7 +2418,7 @@ class TestResetAsync:
         captured_cmds: list[list[str]] = []
         log_path = tmp_path / "agent.log"
 
-        async def capturing_run(cmd: list[str]) -> CommandResult:
+        async def capturing_run(cmd: list[str], **_kwargs: object) -> CommandResult:
             captured_cmds.append(cmd)
             return make_command_result()
 
@@ -2526,7 +2648,7 @@ class TestAddParentChildDependencyAsync:
         beads._parent_epic_cache["issue-1"] = None
         captured_cmds: list[list[str]] = []
 
-        async def capturing_run(cmd: list[str]) -> CommandResult:
+        async def capturing_run(cmd: list[str], **_kwargs: object) -> CommandResult:
             captured_cmds.append(cmd)
             return make_command_result(returncode=0)
 
@@ -2632,7 +2754,7 @@ class TestCreateIssueAsync:
         beads = BeadsClient(tmp_path)
         captured_cmds: list[list[str]] = []
 
-        async def capturing_run(cmd: list[str]) -> CommandResult:
+        async def capturing_run(cmd: list[str], **_kwargs: object) -> CommandResult:
             captured_cmds.append(cmd)
             return make_command_result(stdout="Created issue: new-1")
 
@@ -2659,7 +2781,7 @@ class TestCreateIssueAsync:
         beads = BeadsClient(tmp_path)
         captured_cmds: list[list[str]] = []
 
-        async def capturing_run(cmd: list[str]) -> CommandResult:
+        async def capturing_run(cmd: list[str], **_kwargs: object) -> CommandResult:
             captured_cmds.append(cmd)
             return make_command_result(stdout="Created issue: new-1")
 
@@ -2682,7 +2804,7 @@ class TestCreateIssueAsync:
         beads = BeadsClient(tmp_path)
         captured_cmds: list[list[str]] = []
 
-        async def capturing_run(cmd: list[str]) -> CommandResult:
+        async def capturing_run(cmd: list[str], **_kwargs: object) -> CommandResult:
             captured_cmds.append(cmd)
             return make_command_result(stdout="Created issue: new-1")
 
@@ -2728,7 +2850,7 @@ class TestFindIssueByTagAsync:
         captured_cmds: list[list[str]] = []
         issues = json.dumps([{"id": "issue-1"}])
 
-        async def capturing_run(cmd: list[str]) -> CommandResult:
+        async def capturing_run(cmd: list[str], **_kwargs: object) -> CommandResult:
             captured_cmds.append(cmd)
             return make_command_result(stdout=issues)
 
@@ -2750,7 +2872,7 @@ class TestFindIssueByTagAsync:
         captured_cmds: list[list[str]] = []
         issues = json.dumps([{"id": "issue-1"}])
 
-        async def capturing_run(cmd: list[str]) -> CommandResult:
+        async def capturing_run(cmd: list[str], **_kwargs: object) -> CommandResult:
             captured_cmds.append(cmd)
             label = cmd[3]
             if label == "source:mala-99bh-1":
@@ -2837,7 +2959,7 @@ class TestUpdateIssueAsync:
         beads = BeadsClient(tmp_path)
         captured_cmds: list[list[str]] = []
 
-        async def capturing_run(cmd: list[str]) -> CommandResult:
+        async def capturing_run(cmd: list[str], **_kwargs: object) -> CommandResult:
             captured_cmds.append(cmd)
             return make_command_result()
 
@@ -2857,7 +2979,7 @@ class TestUpdateIssueAsync:
         beads = BeadsClient(tmp_path)
         captured_cmds: list[list[str]] = []
 
-        async def capturing_run(cmd: list[str]) -> CommandResult:
+        async def capturing_run(cmd: list[str], **_kwargs: object) -> CommandResult:
             captured_cmds.append(cmd)
             return make_command_result()
 

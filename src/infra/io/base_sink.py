@@ -6,6 +6,7 @@ methods, and NullEventSink for testing.
 
 from typing import Any, Literal
 
+from src.core.models import ClaimOutcome
 from src.core.protocols.events import EventRunConfig, MalaEventSink
 from src.core.protocols.lifecycle import DeadlockInfoProtocol
 
@@ -79,7 +80,14 @@ class BaseEventSink:
     ) -> None:
         pass
 
-    def on_claim_failed(self, agent_id: str, issue_id: str) -> None:
+    def on_claim_failed(
+        self,
+        agent_id: str,
+        issue_id: str,
+        *,
+        outcome: ClaimOutcome | None = None,
+        blockers: tuple[str, ...] = (),
+    ) -> None:
         pass
 
     # -------------------------------------------------------------------------

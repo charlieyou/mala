@@ -6,6 +6,7 @@ FakeEventSink captures all MalaEventSink events for assertion in tests.
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from src.core.models import ClaimOutcome
 from src.core.protocols.events import EventRunConfig, MalaEventSink
 from src.core.protocols.lifecycle import DeadlockInfoProtocol
 
@@ -119,8 +120,21 @@ class FakeEventSink(MalaEventSink):
             coder=coder,
         )
 
-    def on_claim_failed(self, agent_id: str, issue_id: str) -> None:
-        self._record("claim_failed", agent_id=agent_id, issue_id=issue_id)
+    def on_claim_failed(
+        self,
+        agent_id: str,
+        issue_id: str,
+        *,
+        outcome: ClaimOutcome | None = None,
+        blockers: tuple[str, ...] = (),
+    ) -> None:
+        self._record(
+            "claim_failed",
+            agent_id=agent_id,
+            issue_id=issue_id,
+            outcome=outcome,
+            blockers=blockers,
+        )
 
     # -------------------------------------------------------------------------
     # SDK message streaming

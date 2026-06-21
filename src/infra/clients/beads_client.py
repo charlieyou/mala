@@ -18,7 +18,7 @@ import re
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, cast
 
-from src.core.models import OrderPreference
+from src.core.models import ClaimOutcome, ClaimResult, OrderPreference
 from src.infra.issue_manager import IssueManager
 from src.infra.tools.command_runner import CommandResult, CommandRunner
 
@@ -35,6 +35,9 @@ _BR_LABEL_MAX_LENGTH = 50
 _BR_LABEL_HASH_LENGTH = 8
 _BR_UPDATED_BEFORE_CREATED_ERROR = "updated_at: cannot be before created_at"
 _BR_TIMESTAMP_RETRY_DELAYS_SECONDS = (1.0, 2.0, 4.0, 8.0)
+# br rejects a claim when the issue still has unmet dependencies; the stderr
+# reads e.g. "Validation failed: claim: cannot claim blocked issue: <ids>".
+_BR_CLAIM_BLOCKED_MARKER = "cannot claim blocked issue"
 
 
 def _normalize_br_label(label: str) -> str:
@@ -78,6 +81,35 @@ def _extract_issue_list(data: object) -> list[dict[str, object]] | None:
     return issues
 
 
+def _parse_claim_blockers(stderr: str) -> tuple[str, ...]:
+    """Extract blocker IDs from a 'cannot claim blocked issue: a, b' error."""
+    lowered = stderr.lower()
+    idx = lowered.find(_BR_CLAIM_BLOCKED_MARKER)
+    if idx == -1:
+        return ()
+    tail = stderr[idx + len(_BR_CLAIM_BLOCKED_MARKER) :].lstrip(": ")
+    if not tail.strip():
+        return ()
+    first_line = tail.splitlines()[0]
+    parts = [part.strip().rstrip(".") for part in first_line.split(",")]
+    return tuple(part for part in parts if part)
+
+
+def _classify_claim_failure(stderr: str) -> ClaimResult:
+    """Classify a failed `br update --status in_progress` from its stderr.
+
+    A "cannot claim blocked issue" rejection is benign and retryable; an
+    "already" message means another worker holds it; anything else is a real
+    failure.
+    """
+    lowered = stderr.lower()
+    if _BR_CLAIM_BLOCKED_MARKER in lowered:
+        return ClaimResult.blocked(_parse_claim_blockers(stderr), detail=stderr.strip())
+    if "already" in lowered:
+        return ClaimResult.already_claimed(detail=stderr.strip())
+    return ClaimResult.failed(detail=stderr.strip())
+
+
 class BeadsClient:
     """Client for interacting with beads via the br CLI."""
 
@@ -117,6 +149,8 @@ class BeadsClient:
         self,
         cmd: list[str],
         timeout: float | None = None,
+        *,
+        warn_on_failure: bool = True,
     ) -> CommandResult:
         """Run subprocess asynchronously with timeout and proper termination.
 
@@ -127,6 +161,11 @@ class BeadsClient:
         Args:
             cmd: Command to run.
             timeout: Override timeout (uses self.timeout_seconds if None).
+            warn_on_failure: When True (default), a non-zero exit with stderr is
+                logged as a warning. Set False for commands whose failures are
+                expected and handled by the caller (e.g. a claim that beads
+                refuses because the issue is still blocked), to avoid spurious
+                "Command failed" warnings.
 
         Returns:
             CommandResult with execution details. On timeout, returns
@@ -149,14 +188,16 @@ class BeadsClient:
                 timed_out=True,
             )
 
-        if not result.ok and result.stderr:
+        if warn_on_failure and not result.ok and result.stderr:
             self._log_warning(f"Command failed: {' '.join(cmd)}: {result.stderr}")
 
         return result
 
-    async def _run_issue_update_async(self, cmd: list[str]) -> CommandResult:
+    async def _run_issue_update_async(
+        self, cmd: list[str], *, warn_on_failure: bool = True
+    ) -> CommandResult:
         """Run a br update command, retrying transient timestamp-order failures."""
-        result = await self._run_subprocess_async(cmd)
+        result = await self._run_subprocess_async(cmd, warn_on_failure=warn_on_failure)
         for delay_seconds in _BR_TIMESTAMP_RETRY_DELAYS_SECONDS:
             if (
                 result.returncode == 0
@@ -164,7 +205,9 @@ class BeadsClient:
             ):
                 break
             await asyncio.sleep(delay_seconds)
-            result = await self._run_subprocess_async(cmd)
+            result = await self._run_subprocess_async(
+                cmd, warn_on_failure=warn_on_failure
+            )
         return result
 
     # --- Async methods (non-blocking, use in async context) ---
@@ -512,6 +555,13 @@ class BeadsClient:
             # Filter out in_progress issues from br ready when --resume not passed
             # br ready returns both open and in_progress issues by default
             issues = IssueManager.filter_wip_issues(issues)
+        # Drop issues beads itself reports as blocked. `br ready` can transiently
+        # return issues whose dependencies are not yet satisfied (e.g. during
+        # epic-completion flux or under concurrent writes); attempting to claim
+        # them just fails with "cannot claim blocked issue". This authoritative
+        # cross-check keeps doomed issues out of the ready set.
+        blocked_ids = await self.fetch_blocked_ids_async()
+        issues = IssueManager.filter_blocked_ids(issues, blocked_ids)
         self._warn_missing_ids(only_ids, issues, suppress_warn_ids or set())
         filtered = self._apply_filters(issues, exclude_ids, epic_children, only_ids)
         enriched = await self._enrich_with_epics(filtered)
@@ -606,19 +656,61 @@ class BeadsClient:
             order_preference=order_preference,
         )
 
-    async def claim_async(self, issue_id: str) -> bool:
+    async def claim_async(self, issue_id: str) -> ClaimResult:
         """Claim an issue by setting status to in_progress (async version).
+
+        Classifies the outcome so callers can distinguish a benign, retryable
+        "blocked" rejection (the issue still has unmet dependencies - common
+        when ``br ready`` and the claim validator briefly disagree under
+        concurrent writes) from a genuine failure. The generic "Command failed"
+        warning is suppressed here; an accurate reason is logged instead.
 
         Args:
             issue_id: The issue ID to claim.
 
         Returns:
-            True if successfully claimed, False otherwise.
+            ClaimResult describing the outcome. Truthy only when claimed.
         """
         result = await self._run_issue_update_async(
-            ["br", "update", issue_id, "--status", "in_progress"]
+            ["br", "update", issue_id, "--status", "in_progress"],
+            warn_on_failure=False,
         )
-        return result.returncode == 0
+        if result.returncode == 0:
+            return ClaimResult.claimed()
+
+        claim_result = _classify_claim_failure(result.stderr)
+        if claim_result.outcome is ClaimOutcome.FAILED and result.stderr:
+            # Unexpected failure - surface it the way other br errors are.
+            self._log_warning(
+                f"Command failed: br update {issue_id} --status in_progress: "
+                f"{result.stderr}"
+            )
+        return claim_result
+
+    async def fetch_blocked_ids_async(self) -> set[str]:
+        """Return the set of issue IDs beads currently considers blocked.
+
+        Uses ``br blocked`` - beads' own authoritative computation of which
+        issues have unmet dependencies (a blocks-predecessor or parent epic that
+        is not closed). Fetched fresh on each call (no caching) so it reflects
+        the latest committed state.
+
+        Returns:
+            Set of blocked issue IDs. Empty set on any error (fail open: never
+            hide ready work just because this lookup failed).
+        """
+        result = await self._run_subprocess_async(["br", "blocked", "--json"])
+        if result.returncode != 0:
+            return set()
+        try:
+            issues = _extract_issue_list(json.loads(result.stdout))
+        except json.JSONDecodeError:
+            return set()
+        if not issues:
+            return set()
+        # Every `br blocked` record carries a populated blocked_by; require it so
+        # this never misreads a ready-shaped payload as the blocked set.
+        return {str(i["id"]) for i in issues if i.get("id") and i.get("blocked_by")}
 
     async def reset_async(
         self, issue_id: str, log_path: Path | None = None, error: str | None = None

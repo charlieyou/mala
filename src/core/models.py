@@ -95,6 +95,72 @@ class IssueResolution:
     rationale: str
 
 
+class ClaimOutcome(Enum):
+    """How an attempt to claim (start) an issue resolved.
+
+    Attributes:
+        CLAIMED: The issue was successfully moved to in_progress.
+        BLOCKED: beads refused the claim because the issue has unmet
+            dependencies (a blocks-predecessor or parent epic is not closed).
+            This is a benign, transient state: the issue should stay eligible
+            for a later retry once its blockers complete, NOT be marked failed.
+        ALREADY_CLAIMED: The issue was already in progress (claimed elsewhere).
+        FAILED: The claim failed for any other reason (CLI error, not found).
+    """
+
+    CLAIMED = "claimed"
+    BLOCKED = "blocked"
+    ALREADY_CLAIMED = "already_claimed"
+    FAILED = "failed"
+
+
+@dataclass(frozen=True)
+class ClaimResult:
+    """Result of an issue claim attempt.
+
+    Carries the outcome and enough context to log an accurate reason. Truthy
+    only when the claim succeeded, so existing ``if not await claim_async(...)``
+    call sites keep working.
+
+    Attributes:
+        outcome: How the claim attempt resolved.
+        blockers: Issue IDs reported as blocking the claim (BLOCKED only).
+        detail: Human-readable detail (e.g. CLI stderr) for logging.
+    """
+
+    outcome: ClaimOutcome
+    blockers: tuple[str, ...] = ()
+    detail: str = ""
+
+    @property
+    def ok(self) -> bool:
+        """Whether the issue was successfully claimed."""
+        return self.outcome is ClaimOutcome.CLAIMED
+
+    def __bool__(self) -> bool:
+        return self.ok
+
+    @classmethod
+    def claimed(cls) -> ClaimResult:
+        """Build a successful claim result."""
+        return cls(ClaimOutcome.CLAIMED)
+
+    @classmethod
+    def blocked(cls, blockers: Sequence[str] = (), detail: str = "") -> ClaimResult:
+        """Build a result for a claim refused due to unmet dependencies."""
+        return cls(ClaimOutcome.BLOCKED, tuple(blockers), detail)
+
+    @classmethod
+    def already_claimed(cls, detail: str = "") -> ClaimResult:
+        """Build a result for an issue already claimed elsewhere."""
+        return cls(ClaimOutcome.ALREADY_CLAIMED, (), detail)
+
+    @classmethod
+    def failed(cls, detail: str = "") -> ClaimResult:
+        """Build a result for a claim that failed for any other reason."""
+        return cls(ClaimOutcome.FAILED, (), detail)
+
+
 @dataclass
 class ValidationArtifacts:
     """Record of validation outputs for observability.

@@ -13,6 +13,8 @@ from src.core.models import OrderPreference
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from src.core.models import ClaimResult
+
 
 @runtime_checkable
 class IssueResolutionProtocol(Protocol):
@@ -71,14 +73,16 @@ class IssueProvider(Protocol):
         """
         ...
 
-    async def claim_async(self, issue_id: str) -> bool:
+    async def claim_async(self, issue_id: str) -> ClaimResult:
         """Claim an issue by setting status to in_progress.
 
         Args:
             issue_id: The issue ID to claim.
 
         Returns:
-            True if successfully claimed, False otherwise.
+            ClaimResult describing the outcome. Truthy only when the issue was
+            successfully claimed; otherwise carries the reason (blocked,
+            already-claimed, or failed) for accurate logging and retry handling.
         """
         ...
 

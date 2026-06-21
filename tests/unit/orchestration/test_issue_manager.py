@@ -163,6 +163,20 @@ class TestFilterBlockedEpics:
         assert [i["id"] for i in result] == ["a", "c"]
 
 
+class TestFilterBlockedIds:
+    """Tests for IssueManager.filter_blocked_ids."""
+
+    def test_no_blocked_ids_returns_all(self) -> None:
+        issues = [{"id": "a"}, {"id": "b"}]
+        result = IssueManager.filter_blocked_ids(issues, set())
+        assert result == issues
+
+    def test_excludes_blocked_ids(self) -> None:
+        issues = [{"id": "a"}, {"id": "b"}, {"id": "c"}]
+        result = IssueManager.filter_blocked_ids(issues, {"b"})
+        assert [i["id"] for i in result] == ["a", "c"]
+
+
 class TestNegateTimestamp:
     """Tests for IssueManager.negate_timestamp."""
 

@@ -362,3 +362,38 @@ class TestCoderAttribute:
         captured = capsys.readouterr()
         assert "FIXER" in captured.out
         assert f"coder={coder}" in captured.out
+
+
+class TestConsoleSinkClaimFailed:
+    """Console sink reports an accurate reason when a claim fails."""
+
+    def test_blocked_renders_blockers(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """A blocked claim names the blockers instead of 'already claimed'."""
+        from src.core.models import ClaimOutcome
+
+        sink = ConsoleEventSink()
+
+        sink.on_claim_failed(
+            "agent-1",
+            "issue-1",
+            outcome=ClaimOutcome.BLOCKED,
+            blockers=("epic-1", "task-2"),
+        )
+
+        out = capsys.readouterr().out
+        assert "issue-1" in out
+        assert "blocked by epic-1, task-2" in out
+        assert "already claimed" not in out
+
+    def test_already_claimed_renders_already_claimed(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """An already-claimed result still reads 'already claimed'."""
+        from src.core.models import ClaimOutcome
+
+        sink = ConsoleEventSink()
+
+        sink.on_claim_failed("agent-1", "issue-1", outcome=ClaimOutcome.ALREADY_CLAIMED)
+
+        out = capsys.readouterr().out
+        assert "already claimed" in out

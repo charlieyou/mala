@@ -5,7 +5,10 @@ This module defines protocols for agent-level events and SDK message streaming.
 
 from __future__ import annotations
 
-from typing import Any, Literal, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    from src.core.models import ClaimOutcome
 
 
 @runtime_checkable
@@ -59,12 +62,22 @@ class AgentLifecycleEvents(Protocol):
         """
         ...
 
-    def on_claim_failed(self, agent_id: str, issue_id: str) -> None:
+    def on_claim_failed(
+        self,
+        agent_id: str,
+        issue_id: str,
+        *,
+        outcome: ClaimOutcome | None = None,
+        blockers: tuple[str, ...] = (),
+    ) -> None:
         """Called when claiming an issue fails.
 
         Args:
             agent_id: Agent that attempted the claim.
             issue_id: Issue that could not be claimed.
+            outcome: Why the claim failed (blocked, already-claimed, or failed),
+                so the reason can be reported accurately. Optional for back-compat.
+            blockers: Issue IDs reported as blocking the claim (when known).
         """
         ...
 

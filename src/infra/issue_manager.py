@@ -107,6 +107,29 @@ class IssueManager:
         ]
 
     @staticmethod
+    def filter_blocked_ids(
+        issues: Sequence[IssueRecordT], blocked_ids: set[str]
+    ) -> list[IssueRecordT]:
+        """Filter out issues that beads reports as blocked.
+
+        Cross-checks the ready set against beads' authoritative `br blocked`
+        output: `br ready` can transiently include issues whose dependencies are
+        not yet satisfied, and claiming those just fails. Filtering by issue ID
+        (not parent epic) removes both directly-blocked tasks and tasks blocked
+        only through their parent epic, since beads lists both.
+
+        Args:
+            issues: List of issue dicts.
+            blocked_ids: Set of issue IDs beads currently reports as blocked.
+
+        Returns:
+            List with blocked issues removed.
+        """
+        if not blocked_ids:
+            return list(issues)
+        return [issue for issue in issues if str(issue.get("id")) not in blocked_ids]
+
+    @staticmethod
     def apply_filters(
         issues: Sequence[IssueRecordT],
         exclude_ids: set[str],

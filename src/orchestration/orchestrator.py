@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from src.core.models import ReviewInput
+from src.core.models import ClaimOutcome, ReviewInput
 from src.domain.validation.spec import (
     ValidationScope,
     build_validation_spec,
@@ -1314,11 +1314,22 @@ class MalaOrchestrator:
         # review-first recovery, which still records the claim before reviewing
         # the existing commits.
         skip_claim = already_in_progress and not review_first
-        if not skip_claim and not await self.beads.claim_async(issue_id):
-            self._state.review_in_progress_issue_ids.discard(issue_id)
-            self.issue_coordinator.mark_failed(issue_id)
-            self.event_sink.on_claim_failed(issue_id, issue_id)
-            return None
+        if not skip_claim:
+            claim = await self.beads.claim_async(issue_id)
+            if not claim.ok:
+                self._state.review_in_progress_issue_ids.discard(issue_id)
+                # A "blocked" rejection is transient (the issue's dependencies
+                # are not yet satisfied): leave it eligible for a later retry
+                # rather than marking it permanently failed for this run.
+                if claim.outcome is not ClaimOutcome.BLOCKED:
+                    self.issue_coordinator.mark_failed(issue_id)
+                self.event_sink.on_claim_failed(
+                    issue_id,
+                    issue_id,
+                    outcome=claim.outcome,
+                    blockers=claim.blockers,
+                )
+                return None
 
         task = asyncio.create_task(self.run_implementer(issue_id, flow=flow))
         self.event_sink.on_agent_started(

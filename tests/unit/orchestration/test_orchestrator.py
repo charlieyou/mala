@@ -46,7 +46,12 @@ from src.infra.tools.env import PROMPTS_DIR
 from src.infra.tools.command_runner import CommandRunner
 from src.infra.tools.locking import LockManager
 
-from src.core.models import EpicVerificationResult, OrderPreference
+from src.core.models import (
+    ClaimOutcome,
+    ClaimResult,
+    EpicVerificationResult,
+    OrderPreference,
+)
 from src.core.protocols.evidence import EvidenceProvider
 from src.domain.evidence_check import CommandEvidence, ValidationEvidence
 from src.domain.validation.spec import CommandKind
@@ -444,6 +449,38 @@ class TestSpawnAgent:
         assert "unclaimed-issue" in orchestrator.failed_issues
 
     @pytest.mark.asyncio
+    async def test_blocked_claim_is_not_marked_failed(
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
+        """A claim refused as 'blocked' leaves the issue retryable, not failed."""
+        fake_issues = FakeIssueProvider(
+            {"blocked-issue": FakeIssue(id="blocked-issue")}
+        )
+        fake_issues.blocked_ids.add("blocked-issue")
+        event_sink = FakeEventSink()
+        runs_dir = tmp_path / "runs"
+        runs_dir.mkdir()
+
+        orchestrator = make_orchestrator(
+            repo_path=tmp_path,
+            max_agents=1,
+            issue_provider=fake_issues,
+            event_sink=event_sink,
+            runs_dir=runs_dir,
+            lock_releaser=lambda _: 0,
+        )
+
+        result = await orchestrator.spawn_agent("blocked-issue")
+
+        assert result is None
+        # A blocked claim must NOT be marked failed: it stays eligible for retry
+        # once its blockers complete (otherwise the run starves it forever).
+        assert "blocked-issue" not in orchestrator.failed_issues
+        claim_failed = event_sink.get_events("claim_failed")
+        assert len(claim_failed) == 1
+        assert claim_failed[0].kwargs["outcome"] is ClaimOutcome.BLOCKED
+
+    @pytest.mark.asyncio
     async def test_creates_task_when_claim_succeeds(
         self,
         tmp_path: Path,
@@ -810,7 +847,11 @@ class TestRunOrchestrationLoop:
             patch.object(
                 orchestrator.beads, "get_ready_async", side_effect=get_ready_async
             ),
-            patch.object(orchestrator.beads, "claim_async", return_value=True),
+            patch.object(
+                orchestrator.beads,
+                "claim_async",
+                return_value=ClaimResult.claimed(),
+            ),
             patch.object(orchestrator.beads, "close_async", return_value=True),
             patch.object(
                 orchestrator.beads, "get_parent_epic_async", return_value=None
@@ -1021,7 +1062,11 @@ class TestRunOrchestrationLoop:
             patch.object(
                 orchestrator.beads, "get_ready_async", side_effect=get_ready_async
             ),
-            patch.object(orchestrator.beads, "claim_async", return_value=True),
+            patch.object(
+                orchestrator.beads,
+                "claim_async",
+                return_value=ClaimResult.claimed(),
+            ),
             patch.object(orchestrator.beads, "close_async", return_value=True),
             patch.object(
                 orchestrator.beads, "get_parent_epic_async", return_value=None
@@ -2764,8 +2809,8 @@ class TestEpicClosureAfterChildCompletion:
                 return ["child-issue"]
             return []
 
-        async def mock_claim_async(issue_id: str) -> bool:
-            return True
+        async def mock_claim_async(issue_id: str) -> ClaimResult:
+            return ClaimResult.claimed()
 
         async def mock_get_parent_epic_async(issue_id: str) -> str | None:
             return "parent-epic" if issue_id == "child-issue" else None
@@ -2927,8 +2972,8 @@ class TestEpicClosureAfterChildCompletion:
                 return ["child-1", "child-2"]
             return []
 
-        async def mock_claim_async(issue_id: str) -> bool:
-            return True
+        async def mock_claim_async(issue_id: str) -> ClaimResult:
+            return ClaimResult.claimed()
 
         async def mock_get_parent_epic_async(issue_id: str) -> str | None:
             if issue_id in ("child-1", "child-2"):
@@ -3030,8 +3075,8 @@ class TestEpicClosureAfterChildCompletion:
                 return ["child-1", "child-2"]
             return []
 
-        async def mock_claim_async(issue_id: str) -> bool:
-            return True
+        async def mock_claim_async(issue_id: str) -> ClaimResult:
+            return ClaimResult.claimed()
 
         async def mock_get_parent_epic_async(issue_id: str) -> str | None:
             if issue_id == "child-1":
@@ -3207,8 +3252,8 @@ class TestFailedRunEvidenceCheckEvidence:
                 return ["issue-fail"]
             return []
 
-        async def mock_claim_async(issue_id: str) -> bool:
-            return True
+        async def mock_claim_async(issue_id: str) -> ClaimResult:
+            return ClaimResult.claimed()
 
         with (
             patch.object(

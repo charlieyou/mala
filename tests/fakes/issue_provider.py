@@ -19,7 +19,7 @@ Observable state:
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from src.core.models import OrderPreference
+from src.core.models import ClaimResult, OrderPreference
 
 
 @dataclass
@@ -57,6 +57,9 @@ class FakeIssueProvider:
         # Observable state for assertions
         self.claimed: set[str] = set()
         self.closed: set[str] = set()
+        # IDs that beads should report as blocked: claim_async refuses these and
+        # they are dropped from get_ready_async (mirrors `br blocked`).
+        self.blocked_ids: set[str] = set()
         self.reset_calls: list[tuple[str, Path | None, str | None]] = []
         self.created_issues: list[dict[str, object]] = []
         self.followup_calls: list[tuple[str, str, Path | None]] = []
@@ -101,6 +104,9 @@ class FakeIssueProvider:
         for issue_id, issue in self.issues.items():
             if issue_id in exclude:
                 continue
+            if issue_id in self.blocked_ids:
+                # Mirror `br blocked` cross-check in the real client.
+                continue
             if issue.status not in eligible_statuses:
                 continue
             if only_ids is not None and issue_id not in only_ids:
@@ -130,13 +136,19 @@ class FakeIssueProvider:
         )
         return [str(i["id"]) for i in sorted_issues]
 
-    async def claim_async(self, issue_id: str) -> bool:
+    async def claim_async(self, issue_id: str) -> ClaimResult:
         """Claim an issue by setting status to in_progress."""
+        if issue_id in self.blocked_ids:
+            return ClaimResult.blocked((f"{issue_id}-blocker",))
         if issue_id not in self.issues:
-            return False
+            return ClaimResult.failed("issue not found")
         self.issues[issue_id].status = "in_progress"
         self.claimed.add(issue_id)
-        return True
+        return ClaimResult.claimed()
+
+    async def fetch_blocked_ids_async(self) -> set[str]:
+        """Return the set of issue IDs beads reports as blocked."""
+        return set(self.blocked_ids)
 
     async def close_async(self, issue_id: str) -> bool:
         """Close an issue by setting status to closed."""

@@ -8,6 +8,7 @@ import math
 import re
 from typing import Any, Literal
 
+from src.core.models import ClaimOutcome
 from src.core.protocols.events import EventRunConfig, MalaEventSink
 from src.core.protocols.lifecycle import DeadlockInfoProtocol
 from src.infra.io.base_sink import BaseEventSink
@@ -263,8 +264,24 @@ class ConsoleEventSink(BaseEventSink):
             agent_id=agent_id,
         )
 
-    def on_claim_failed(self, agent_id: str, issue_id: str) -> None:
-        log("○", f"SKIP {issue_id} already claimed", agent_id=agent_id)
+    def on_claim_failed(
+        self,
+        agent_id: str,
+        issue_id: str,
+        *,
+        outcome: ClaimOutcome | None = None,
+        blockers: tuple[str, ...] = (),
+    ) -> None:
+        if outcome is ClaimOutcome.BLOCKED:
+            if blockers:
+                detail = f"blocked by {', '.join(blockers)}"
+            else:
+                detail = "blocked (dependencies not ready)"
+            log("○", f"SKIP {issue_id}: {detail}", agent_id=agent_id)
+        elif outcome is ClaimOutcome.ALREADY_CLAIMED:
+            log("○", f"SKIP {issue_id} already claimed", agent_id=agent_id)
+        else:
+            log("○", f"SKIP {issue_id}: claim failed", agent_id=agent_id)
 
     # -------------------------------------------------------------------------
     # SDK message streaming

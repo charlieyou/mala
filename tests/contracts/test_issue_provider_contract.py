@@ -164,7 +164,7 @@ class TestFakeIssueProviderContract:
     ) -> None:
         """claim_async sets issue status to in_progress."""
         result = await fake_provider.claim_async("issue-1")
-        assert result is True
+        assert result.ok is True
         ready = await fake_provider.get_ready_async()
         assert "issue-1" not in ready
 
@@ -172,9 +172,9 @@ class TestFakeIssueProviderContract:
     async def test_claim_nonexistent_returns_false(
         self, fake_provider: FakeIssueProvider
     ) -> None:
-        """claim_async returns False for nonexistent issue."""
+        """claim_async returns a non-ok result for a nonexistent issue."""
         result = await fake_provider.claim_async("nonexistent")
-        assert result is False
+        assert result.ok is False
 
     @pytest.mark.integration
     async def test_close_removes_from_ready(
