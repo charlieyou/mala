@@ -415,7 +415,9 @@ def _refresh_isolated_codex_config_seed(config_path: Path, config_seed: str) -> 
     preserved and will be refreshed by the plugin-config writer.
     """
     try:
-        existing = config_path.read_text(encoding="utf-8") if config_path.exists() else ""
+        existing = (
+            config_path.read_text(encoding="utf-8") if config_path.exists() else ""
+        )
     except OSError:
         existing = ""
     refreshed = _merge_isolated_codex_config_seed(existing, config_seed)
@@ -468,7 +470,10 @@ def _is_model_provider_section(stripped_line: str) -> bool:
 def _is_seed_top_level_line(stripped_line: str, preserved_lines: list[str]) -> bool:
     if not stripped_line or stripped_line.startswith("#"):
         return False
-    if any(line.strip().startswith("[") and line.strip().endswith("]") for line in preserved_lines):
+    if any(
+        line.strip().startswith("[") and line.strip().endswith("]")
+        for line in preserved_lines
+    ):
         return False
     key = stripped_line.split("=", 1)[0].strip()
     return key in _CODEX_CONFIG_AUTH_SEED_KEYS
@@ -679,13 +684,12 @@ class CodexAgentProvider:
         """Construct a per-session :class:`CodexRuntimeBuilder`.
 
         Threads the resolved Codex options
-        (``MalaConfig.coder_options.codex.*``) and the injected
-        ``mcp_server_factory`` into the builder. ``deadlock_monitor``
-        is accepted for protocol parity (plan A6); Phase C does not
-        wire it because Codex's lock-event surface ships with the
-        Phase E hook + Phase G MCP, which arrive after T010.
+        (``MalaConfig.coder_options.codex.*``), the injected
+        ``mcp_server_factory``, and the optional deadlock monitor into
+        the builder. The monitor is bridged through Codex's
+        ``MALA_LOCK_EVENT_LOG`` side channel so the bundled stdio MCP
+        server can feed the same :class:`DeadlockMonitor` used by Amp.
         """
-        del deadlock_monitor
         # Lazy import so module-load of ``codex_provider`` does not
         # transitively reach ``src.infra.hooks`` via the runtime's
         # ``LintCache`` carrier (the import-linter contract is OK with
@@ -702,6 +706,7 @@ class CodexAgentProvider:
             effort=self._effort,
             approval_policy=self._approval_policy,
             sandbox=self._sandbox,
+            deadlock_monitor=deadlock_monitor,
         )
         # Thread a per-provider isolated ``CODEX_HOME`` into the
         # runtime's per-process env so the spawned ``codex app-server``
@@ -874,7 +879,8 @@ class CodexAgentProvider:
         )
         repo_key = encode_repo_path(repo_path) if repo_path is not None else "-global"
         canonical_mcp_servers = {
-            name: spec for name, spec in sorted(self._mcp_servers, key=lambda item: item[0])
+            name: spec
+            for name, spec in sorted(self._mcp_servers, key=lambda item: item[0])
         }
         fingerprint_payload = {
             "user_codex_home": str(user_codex_home.expanduser().resolve()),

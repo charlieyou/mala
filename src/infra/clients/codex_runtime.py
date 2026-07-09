@@ -26,16 +26,21 @@ SDK's ``AskForApproval`` / ``SandboxMode`` enums when it constructs the
 
 from __future__ import annotations
 
+import logging
 import os
+import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Set as AbstractSet
+    from collections.abc import Callable, Mapping, Set as AbstractSet
     from pathlib import Path
 
+    from src.core.protocols.lifecycle import DeadlockMonitorProtocol
     from src.core.protocols.sdk import McpServerFactory
     from src.infra.hooks.lint_cache import LintCache
+
+logger = logging.getLogger(__name__)
 
 
 CodexApprovalPolicy = Literal["never", "on-request", "on-failure", "untrusted"]
@@ -83,6 +88,15 @@ class CodexRuntime:
     ``runtime.lint_cache`` unconditionally so a real instance must be
     present even before Phase D wires Codex's bash events into it."""
     resume_thread_id: str | None = None
+    lock_event_log_path: Path | None = None
+    """Path the stdio locking MCP server writes lock-event JSONL to when
+    a deadlock monitor was passed via the ``deadlock_monitor`` parameter
+    of :meth:`AgentProvider.runtime_builder`. The Codex client tails this
+    side-channel into :attr:`lock_event_callback`."""
+    lock_event_callback: Callable[[object], object] | None = None
+    """Async-or-sync handler invoked for each parsed lock event. Sourced
+    from the deadlock monitor's ``handle_event`` method when
+    :meth:`AgentProvider.runtime_builder` received a ``deadlock_monitor``."""
 
 
 class CodexRuntimeBuilder:
@@ -106,6 +120,7 @@ class CodexRuntimeBuilder:
         effort: str | None,
         approval_policy: CodexApprovalPolicy,
         sandbox: CodexSandbox,
+        deadlock_monitor: DeadlockMonitorProtocol | None = None,
     ) -> None:
         """Initialize the builder.
 
@@ -123,6 +138,11 @@ class CodexRuntimeBuilder:
                 upstream by :class:`CodexAgentProvider`.
             sandbox: Codex sandbox mode. Defaults are resolved upstream
                 by :class:`CodexAgentProvider`.
+            deadlock_monitor: Optional deadlock monitor whose
+                ``handle_event`` is wired to Codex's lock-event JSONL side
+                channel. Passed in from
+                :meth:`AgentProvider.runtime_builder` so the cross-coder
+                pipeline does not call coder-specific fluent methods.
         """
         self._repo_path = repo_path
         self._agent_id = agent_id
@@ -137,6 +157,7 @@ class CodexRuntimeBuilder:
         self._lint_tools: AbstractSet[str] | None = None
         self._agent_timeout_seconds: float | None = None
         self._base_instructions: str | None = None
+        self._deadlock_monitor: DeadlockMonitorProtocol | None = deadlock_monitor
 
     def with_resume(self, resume_id: str | None) -> CodexRuntimeBuilder:
         """Configure the next ``build()`` to resume an existing Codex thread.
@@ -215,11 +236,40 @@ class CodexRuntimeBuilder:
         :class:`LintCache` instance for the runtime so the pipeline can
         read ``runtime.lint_cache`` without branching on coder.
         """
+        lock_event_callback = None
+        if self._deadlock_monitor is not None:
+            lock_event_callback = getattr(self._deadlock_monitor, "handle_event", None)
+
+        from src.infra.tools.env import USER_CONFIG_DIR
+
+        lock_event_log_path = (
+            USER_CONFIG_DIR
+            / "codex-lock-events"
+            / f"{self._agent_id}-{uuid.uuid4().hex}.jsonl"
+            if lock_event_callback is not None
+            else None
+        )
+
+        logger.debug(
+            "CodexRuntimeBuilder: deadlock monitor wired=%s agent_id=%s",
+            lock_event_callback is not None,
+            self._agent_id,
+        )
+
         if self._mcp_servers_override is not None:
             mcp_servers: dict[str, object] = dict(self._mcp_servers_override)
         else:
             mcp_servers = dict(
                 self._mcp_server_factory(self._agent_id, self._repo_path, None)
+            )
+        if lock_event_log_path is not None:
+            from src.infra.clients.codex_mcp_factory import _with_lock_event_log
+
+            mcp_servers = _with_lock_event_log(mcp_servers, str(lock_event_log_path))
+            logger.debug(
+                "CodexRuntimeBuilder: allocated lock-event log path=%s agent_id=%s",
+                lock_event_log_path,
+                self._agent_id,
             )
 
         # Lazy import to keep ``codex_runtime`` free of a hard
@@ -237,6 +287,10 @@ class CodexRuntimeBuilder:
             "MALA_REPO_NAMESPACE": str(self._repo_path),
             **self._env_extra,
         }
+        if lock_event_log_path is not None:
+            env["MALA_LOCK_EVENT_LOG"] = str(lock_event_log_path)
+        else:
+            env.pop("MALA_LOCK_EVENT_LOG", None)
 
         # Lazy import to keep ``codex_runtime`` free of a hard
         # ``src.infra.hooks`` dep at module-load time; the import-linter
@@ -262,4 +316,6 @@ class CodexRuntimeBuilder:
             env=env,
             lint_cache=lint_cache,
             resume_thread_id=self._resume_thread_id,
+            lock_event_log_path=lock_event_log_path,
+            lock_event_callback=lock_event_callback,
         )

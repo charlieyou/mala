@@ -279,6 +279,30 @@ def test_runtime_builder_threads_resolved_options(
 
 
 @pytest.mark.unit
+def test_runtime_builder_threads_deadlock_monitor_to_runtime(
+    tmp_path: Path, fake_mcp_factory: Callable[..., dict[str, object]]
+) -> None:
+    """Codex provider must not discard the deadlock monitor."""
+    from src.domain.deadlock import DeadlockMonitor
+
+    provider = CodexAgentProvider()
+    monitor = DeadlockMonitor()
+
+    builder = provider.runtime_builder(
+        tmp_path,
+        "agent-x",
+        mcp_server_factory=fake_mcp_factory,
+        deadlock_monitor=monitor,
+    )
+    runtime = builder.build()
+
+    assert isinstance(runtime, CodexRuntime)
+    assert runtime.lock_event_log_path is not None
+    assert runtime.lock_event_callback is not None
+    assert runtime.env["MALA_LOCK_EVENT_LOG"] == str(runtime.lock_event_log_path)
+
+
+@pytest.mark.unit
 def test_runtime_builder_isolates_codex_home_before_install_prerequisites(
     fake_codex_env: tuple[Path, Path],
     fake_mcp_factory: Callable[..., dict[str, object]],
@@ -366,9 +390,7 @@ def test_install_prerequisites_reuses_runtime_builder_isolated_home(
 
     assert _provider_isolated_codex_home(provider) == isolated_home
     assert _codex_plugin_dir(isolated_home).is_dir()
-    assert "trusted_hash" in (isolated_home / "config.toml").read_text(
-        encoding="utf-8"
-    )
+    assert "trusted_hash" in (isolated_home / "config.toml").read_text(encoding="utf-8")
     assert not _codex_plugin_dir(codex_home).exists()
 
 
@@ -833,6 +855,7 @@ def test_install_prerequisites_runs_installer_and_writes_trusted_hash(
         "MALA_AGENT_ID",
         "MALA_LOCK_DIR",
         "MALA_REPO_NAMESPACE",
+        "MALA_LOCK_EVENT_LOG",
     ]
 
     config_toml = (isolated_home / "config.toml").read_text(encoding="utf-8")
@@ -917,7 +940,9 @@ def test_fast_and_non_fast_providers_use_distinct_isolated_homes(
     _make_executable(bin_dir / "mala-codex-pre-tool-use")
 
     default_provider = CodexAgentProvider(selftest_probe=_noop_probe)
-    default_provider.install_prerequisites(tmp_path, mcp_server_factory=fake_mcp_factory)
+    default_provider.install_prerequisites(
+        tmp_path, mcp_server_factory=fake_mcp_factory
+    )
     default_home = _provider_isolated_codex_home(default_provider)
 
     fast_provider = CodexAgentProvider(fast_mode=True, selftest_probe=_noop_probe)
@@ -1335,9 +1360,7 @@ def test_reused_isolated_codex_home_refreshes_user_config_seed(
     first = CodexAgentProvider(selftest_probe=_noop_probe)
     first.install_prerequisites(tmp_path, mcp_server_factory=fake_mcp_factory)
     home = _provider_isolated_codex_home(first)
-    assert "https://first.example" in (home / "config.toml").read_text(
-        encoding="utf-8"
-    )
+    assert "https://first.example" in (home / "config.toml").read_text(encoding="utf-8")
 
     user_config.write_text(
         'model_provider = "second"\n\n[model_providers.second]\nbase_url = "https://second.example/v1"\n',

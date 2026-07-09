@@ -70,9 +70,10 @@ def _build_bundled_codex_mcp_spec(agent_id: str, repo_path: Path) -> dict[str, o
         "MALA_AGENT_ID": agent_id,
         "MALA_REPO_NAMESPACE": str(repo_path),
     }
-    lock_dir = os.environ.get("MALA_LOCK_DIR")
-    if lock_dir:
-        env["MALA_LOCK_DIR"] = lock_dir
+    for key in ("MALA_LOCK_DIR", "MALA_LOCK_EVENT_LOG"):
+        value = os.environ.get(key)
+        if value:
+            env[key] = value
 
     return {
         "command": CODEX_BUNDLED_MCP_LAUNCHER_COMMAND,
@@ -129,6 +130,7 @@ def _build_merged_codex_plugin_mcp_json(
             "MALA_AGENT_ID",
             "MALA_LOCK_DIR",
             "MALA_REPO_NAMESPACE",
+            "MALA_LOCK_EVENT_LOG",
         ],
     }
     return (_json.dumps({"mcpServers": merged}, indent=2) + "\n").encode("utf-8")
@@ -171,3 +173,26 @@ def _create_codex_mcp_server_factory(
         return merged
 
     return cast("McpServerFactory", factory)
+
+
+def _with_lock_event_log(
+    mcp_config: dict[str, object], lock_event_log_path: str
+) -> dict[str, object]:
+    """Return MCP config with ``MALA_LOCK_EVENT_LOG`` added to stdio envs.
+
+    The static Codex plugin forwards the variable by name via ``env_vars``;
+    this runtime-time shape is for tests, diagnostics, and any future inline
+    MCP consumers that inspect :attr:`CodexRuntime.mcp_servers` directly.
+    """
+    updated: dict[str, object] = {}
+    for name, spec in mcp_config.items():
+        if not isinstance(spec, dict):
+            updated[name] = spec
+            continue
+        spec_copy = dict(spec)
+        env = spec_copy.get("env")
+        env_copy = dict(env) if isinstance(env, dict) else {}
+        env_copy["MALA_LOCK_EVENT_LOG"] = lock_event_log_path
+        spec_copy["env"] = env_copy
+        updated[name] = spec_copy
+    return updated

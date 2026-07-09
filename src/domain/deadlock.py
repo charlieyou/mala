@@ -5,7 +5,7 @@ acquisition patterns among parallel agents.
 
 The WaitForGraph tracks:
 - Which agents hold which locks (holds: dict[lock_path, agent_id])
-- Which agents are waiting for which locks (waits: dict[agent_id, lock_path])
+- Which agents are waiting for which locks (waits: dict[agent_id, set[lock_path]])
 
 Cycle detection uses DFS from waiting agents to find circular dependencies.
 """
@@ -32,6 +32,7 @@ __all__ = [
     "DeadlockCallback",
     "DeadlockInfo",
     "DeadlockMonitor",
+    "WaitEdge",
     "WaitForGraph",
 ]
 
@@ -75,12 +76,21 @@ class AgentInfo:
     start_time: float
 
 
+@dataclass(frozen=True)
+class WaitEdge:
+    """One blocking wait-for edge: waiting agent --lock--> holder agent."""
+
+    waiting_agent: str
+    lock_path: str
+    holder_agent: str
+
+
 class WaitForGraph:
     """Graph tracking lock holds and waits for cycle detection.
 
     The graph maintains two mappings:
     - holds: lock_path -> agent_id (who holds each lock)
-    - waits: agent_id -> lock_path (what each agent is waiting for)
+    - waits: agent_id -> set[lock_path] (what each agent is waiting for)
 
     Cycle detection walks from a waiting agent through the hold/wait
     edges to find circular dependencies.
@@ -89,7 +99,7 @@ class WaitForGraph:
     def __init__(self) -> None:
         """Initialize empty graph."""
         self._holds: dict[str, str] = {}  # lock_path -> agent_id
-        self._waits: dict[str, str] = {}  # agent_id -> lock_path
+        self._waits: dict[str, set[str]] = {}  # agent_id -> lock paths
 
     def add_hold(self, agent_id: str, lock_path: str) -> None:
         """Record that an agent holds a lock.
@@ -109,9 +119,12 @@ class WaitForGraph:
             )
         self._holds[lock_path] = agent_id
         logger.debug("Lock acquired: agent_id=%s lock_path=%s", agent_id, lock_path)
-        # Clear wait if this agent was waiting for this lock
-        if self._waits.get(agent_id) == lock_path:
-            del self._waits[agent_id]
+        # Clear only this wait edge if the agent was waiting for this lock.
+        waited_locks = self._waits.get(agent_id)
+        if waited_locks is not None:
+            waited_locks.discard(lock_path)
+            if not waited_locks:
+                del self._waits[agent_id]
 
     def add_wait(self, agent_id: str, lock_path: str) -> None:
         """Record that an agent is waiting for a lock.
@@ -128,15 +141,7 @@ class WaitForGraph:
                 agent_id,
                 lock_path,
             )
-        old_wait = self._waits.get(agent_id)
-        if old_wait is not None and old_wait != lock_path:
-            logger.warning(
-                "Wait edge overwritten: agent_id=%s old_lock=%s new_lock=%s",
-                agent_id,
-                old_wait,
-                lock_path,
-            )
-        self._waits[agent_id] = lock_path
+        self._waits.setdefault(agent_id, set()).add(lock_path)
         logger.debug("Wait added: agent_id=%s lock_path=%s", agent_id, lock_path)
 
     def remove_hold(self, agent_id: str, lock_path: str) -> None:
@@ -167,9 +172,8 @@ class WaitForGraph:
         Args:
             agent_id: The agent to remove.
         """
-        # Remove wait entry
-        if agent_id in self._waits:
-            del self._waits[agent_id]
+        # Remove all wait entries
+        self._waits.pop(agent_id, None)
         # Remove all holds by this agent
         locks_to_remove = [
             lock for lock, holder in self._holds.items() if holder == agent_id
@@ -188,16 +192,28 @@ class WaitForGraph:
         """
         return self._holds.get(lock_path)
 
-    def get_waited_lock(self, agent_id: str) -> str | None:
-        """Get the lock an agent is waiting for.
+    def get_waited_locks(self, agent_id: str) -> set[str]:
+        """Get the locks an agent is waiting for.
 
         Args:
             agent_id: The agent ID.
 
         Returns:
-            Lock path if the agent is waiting, None otherwise.
+            A copy of the lock paths the agent is waiting for.
         """
-        return self._waits.get(agent_id)
+        return set(self._waits.get(agent_id, set()))
+
+    def held_lock_count(self) -> int:
+        """Return the number of currently held locks."""
+        return len(self._holds)
+
+    def waiting_agent_count(self) -> int:
+        """Return the number of agents with at least one wait edge."""
+        return len(self._waits)
+
+    def waited_lock_count(self) -> int:
+        """Return the total number of wait edges."""
+        return sum(len(locks) for locks in self._waits.values())
 
     def detect_cycle(self) -> list[str] | None:
         """Detect a deadlock cycle in the wait-for graph.
@@ -216,18 +232,32 @@ class WaitForGraph:
             The cycle is returned in order of discovery (first agent
             is where the cycle was detected).
         """
+        cycle_edges = self.detect_cycle_edges()
+        if cycle_edges is None:
+            return None
+        return [edge.waiting_agent for edge in cycle_edges]
+
+    def detect_cycle_edges(self) -> list[WaitEdge] | None:
+        """Detect a deadlock cycle and return the lock edge for each hop.
+
+        Returns:
+            List of wait edges in cycle order if found, None otherwise.
+            Each edge is ``waiting_agent --lock_path--> holder_agent``.
+        """
         safe: set[str] = set()  # BLACK: agents proven not in any cycle
 
-        for start_agent in self._waits:
+        for start_agent in list(self._waits):
             if start_agent in safe:
                 continue
 
-            cycle = self._find_cycle_from(start_agent, safe)
+            cycle = self._find_cycle_edges_from(start_agent, safe)
             if cycle:
                 return cycle
         return None
 
-    def _find_cycle_from(self, start_agent: str, safe: set[str]) -> list[str] | None:
+    def _find_cycle_edges_from(
+        self, start_agent: str, safe: set[str]
+    ) -> list[WaitEdge] | None:
         """DFS from a single agent to find a cycle.
 
         Updates the safe set with agents proven not to lead to a cycle.
@@ -239,38 +269,52 @@ class WaitForGraph:
         Returns:
             Cycle path if found, None otherwise.
         """
-        path: list[str] = []
-        path_set: set[str] = set()  # GRAY: agents in current path
+        visiting: dict[str, int] = {}  # GRAY: agent -> index in path_edges
+        path_edges: list[WaitEdge] = []
 
-        current = start_agent
-        while True:
-            if current in safe:
-                # Reached a node proven safe, entire path is safe
-                safe.update(path_set)
+        def dfs(agent_id: str) -> list[WaitEdge] | None:
+            if agent_id in safe:
                 return None
 
-            if current in path_set:
-                # Found a cycle - extract it from the path
-                cycle_start_idx = path.index(current)
-                return path[cycle_start_idx:]
+            visiting[agent_id] = len(path_edges)
+            for edge in self._outgoing_edges(agent_id):
+                if edge.holder_agent in visiting:
+                    cycle_start_idx = visiting[edge.holder_agent]
+                    return [*path_edges[cycle_start_idx:], edge]
+                path_edges.append(edge)
+                cycle = dfs(edge.holder_agent)
+                if cycle is not None:
+                    return cycle
+                path_edges.pop()
 
-            # What lock is this agent waiting for?
-            lock_waiting = self._waits.get(current)
-            if lock_waiting is None:
-                # Agent not waiting for anything, path is safe
-                safe.update(path_set)
-                return None
+            visiting.pop(agent_id, None)
+            safe.add(agent_id)
+            return None
 
-            # Who holds that lock?
-            holder = self._holds.get(lock_waiting)
+        return dfs(start_agent)
+
+    def _outgoing_edges(self, agent_id: str) -> list[WaitEdge]:
+        """Return blocking wait edges for an agent in deterministic order."""
+        edges: list[WaitEdge] = []
+        for lock_path in sorted(self._waits.get(agent_id, set())):
+            holder = self._holds.get(lock_path)
             if holder is None:
-                # Lock not held, path is safe
-                safe.update(path_set)
-                return None
-
-            path.append(current)
-            path_set.add(current)
-            current = holder
+                continue
+            if holder == agent_id:
+                logger.warning(
+                    "Invariant: wait edge points to same agent: agent=%s lock=%s",
+                    agent_id,
+                    lock_path,
+                )
+                continue
+            edges.append(
+                WaitEdge(
+                    waiting_agent=agent_id,
+                    lock_path=lock_path,
+                    holder_agent=holder,
+                )
+            )
+        return edges
 
 
 class DeadlockMonitor:
@@ -356,20 +400,12 @@ class DeadlockMonitor:
                 result = self.on_deadlock(deadlock_info)
                 if asyncio.iscoroutine(result):
                     await result
-            logger.debug(
-                "Graph updated: holds=%d waits=%d",
-                len(self._graph._holds),
-                len(self._graph._waits),
-            )
+            self._log_graph_state()
             return deadlock_info
         elif event.event_type == LockEventType.RELEASED:
             self._graph.remove_hold(event.agent_id, event.lock_path)
 
-        logger.debug(
-            "Graph updated: holds=%d waits=%d",
-            len(self._graph._holds),
-            len(self._graph._waits),
-        )
+        self._log_graph_state()
         return None
 
     def _check_for_deadlock(
@@ -384,12 +420,16 @@ class DeadlockMonitor:
         Returns:
             DeadlockInfo with victim selection if deadlock detected.
         """
-        cycle = self._graph.detect_cycle()
+        cycle_edges = self._graph.detect_cycle_edges()
+        cycle = [edge.waiting_agent for edge in cycle_edges] if cycle_edges else None
         logger.debug("Cycle check: found=%s", cycle is not None)
         if not cycle:
             return None
 
-        logger.warning("Cycle detected: agents=%s", cycle)
+        logger.warning(
+            "Cycle detected: path=%s",
+            self._format_cycle_edges(cycle_edges or []),
+        )
 
         # Select victim: youngest agent (max start_time) in cycle
         victim = self._select_victim(cycle)
@@ -397,11 +437,25 @@ class DeadlockMonitor:
             # No registered agents in cycle (shouldn't happen)
             return None
 
-        # Find what the victim is blocked on (use victim's wait, not triggering lock)
+        # Find what the victim is blocked on. Prefer the exact cycle edge
+        # from victim -> next cycle agent so multi-wait victims report the
+        # blocker that actually closes the detected cycle.
         victim_info = self._agents.get(victim.agent_id)
-        victim_waited_lock = self._graph.get_waited_lock(victim.agent_id)
-        blocked_on = victim_waited_lock or lock_path
-        blocker_id = self._graph.get_holder(blocked_on)
+        victim_edge = next(
+            (
+                edge
+                for edge in cycle_edges or []
+                if edge.waiting_agent == victim.agent_id
+            ),
+            None,
+        )
+        if victim_edge is None:
+            blocked_on, blocker_id = self._find_victim_blocker(
+                victim.agent_id, set(cycle), fallback_lock=lock_path
+            )
+        else:
+            blocked_on = victim_edge.lock_path
+            blocker_id = victim_edge.holder_agent
         blocker_info = self._agents.get(blocker_id) if blocker_id else None
 
         return DeadlockInfo(
@@ -411,6 +465,45 @@ class DeadlockMonitor:
             blocked_on=blocked_on,
             blocker_id=blocker_id or "",
             blocker_issue_id=blocker_info.issue_id if blocker_info else None,
+        )
+
+    def _find_victim_blocker(
+        self, victim_id: str, cycle_agents: set[str], *, fallback_lock: str
+    ) -> tuple[str, str | None]:
+        """Choose a deterministic blocker for a victim when edge metadata is absent."""
+        for waited_lock in sorted(self._graph.get_waited_locks(victim_id)):
+            holder = self._graph.get_holder(waited_lock)
+            if holder in cycle_agents:
+                return waited_lock, holder
+        for waited_lock in sorted(self._graph.get_waited_locks(victim_id)):
+            holder = self._graph.get_holder(waited_lock)
+            if holder is not None:
+                return waited_lock, holder
+        return fallback_lock, self._graph.get_holder(fallback_lock)
+
+    def _log_graph_state(self) -> None:
+        """Log compact wait-for graph diagnostics for incident debugging."""
+        logger.debug(
+            "Graph updated: held_locks=%d waiting_agents=%d waited_locks=%d",
+            self._graph.held_lock_count(),
+            self._graph.waiting_agent_count(),
+            self._graph.waited_lock_count(),
+        )
+
+    def diagnostics(self) -> dict[str, int]:
+        """Return current monitor graph counts for status/debug callers."""
+        return {
+            "registered_agents": len(self._agents),
+            "held_locks": self._graph.held_lock_count(),
+            "waiting_agents": self._graph.waiting_agent_count(),
+            "waited_locks": self._graph.waited_lock_count(),
+        }
+
+    def _format_cycle_edges(self, edges: Sequence[WaitEdge]) -> str:
+        """Format cycle edges as ``agent --lock--> holder`` for logs."""
+        return " | ".join(
+            f"{edge.waiting_agent} --{edge.lock_path}--> {edge.holder_agent}"
+            for edge in edges
         )
 
     def _select_victim(self, cycle: Sequence[str]) -> AgentInfo | None:

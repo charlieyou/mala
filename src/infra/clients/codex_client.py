@@ -49,6 +49,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import inspect
 import json
 import logging
 import os
@@ -176,6 +177,9 @@ class CodexClient:
             None  # binary file handle; typed Any to avoid IO[...] noise
         )
         self._sigint_pgid: int | None = None
+        self._lock_event_task: asyncio.Task[None] | None = None
+        self._lock_event_offset: int = 0
+        self._lock_event_drain_lock = asyncio.Lock()
 
     # ------------------------------------------------------------------
     # Properties used by the orchestrator + tests
@@ -238,21 +242,27 @@ class CodexClient:
         """
         from src.infra.sdk_transport import ensure_codex_sigint_isolated_app_server
 
+        self._start_lock_event_tailer()
+
         codex_app_server = import_codex_app_server()
         ensure_codex_sigint_isolated_app_server()
         AppServerConfig = codex_app_server.AppServerConfig
         AsyncCodex = codex_app_server.AsyncCodex
 
-        codex_bin = resolve_codex_bin_for_app_server()
-        config = AppServerConfig(
-            codex_bin=codex_bin,
-            cwd=str(self._runtime.cwd),
-            env=dict(self._runtime.env),
-        )
-        self._codex = AsyncCodex(config=config)
-        await self._codex.__aenter__()
-        self._sigint_pgid = self._detect_sigint_pgid(self._codex)
-        return self
+        try:
+            codex_bin = resolve_codex_bin_for_app_server()
+            config = AppServerConfig(
+                codex_bin=codex_bin,
+                cwd=str(self._runtime.cwd),
+                env=dict(self._runtime.env),
+            )
+            self._codex = AsyncCodex(config=config)
+            await self._codex.__aenter__()
+            self._sigint_pgid = self._detect_sigint_pgid(self._codex)
+            return self
+        except BaseException:
+            await self._stop_lock_event_tailer()
+            raise
 
     async def __aexit__(
         self,
@@ -375,10 +385,14 @@ class CodexClient:
             # client they should still get a usable iterator.
             adapter = CodexEventAdapter()
             self._event_adapter = adapter
-        async for notification in turn.stream():
-            self._tee_notification(notification)
-            for event in adapter.to_events(notification):
-                yield event
+        try:
+            async for notification in turn.stream():
+                self._tee_notification(notification)
+                await self._drain_configured_lock_events()
+                for event in adapter.to_events(notification):
+                    yield event
+        finally:
+            await self._drain_configured_lock_events()
 
     def supports_background_tasks(self) -> bool:
         """Codex is request/response only; mala skips the bg wait path."""
@@ -647,8 +661,124 @@ class CodexClient:
                 # ensures ``codex.close()`` runs even if the tee close
                 # raises (it shouldn't, but the ordering is the safer of
                 # the two).
-                self._close_tee()
-                if close_completed:
-                    self._clear_sigint_pgid()
-                else:
-                    self._kill_sigint_pgid()
+                try:
+                    await self._stop_lock_event_tailer()
+                finally:
+                    self._close_tee()
+                    if close_completed:
+                        self._clear_sigint_pgid()
+                    else:
+                        self._kill_sigint_pgid()
+
+    # ------------------------------------------------------------------
+    # Lock-event JSONL side-channel (Codex stdio MCP -> DeadlockMonitor)
+    # ------------------------------------------------------------------
+
+    def _start_lock_event_tailer(self) -> None:
+        """Prepare and tail the Codex MCP lock-event JSONL file if configured."""
+        path = self._runtime.lock_event_log_path
+        if path is None:
+            return
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            if self._lock_event_offset == 0:
+                path.unlink(missing_ok=True)
+                path.touch()
+        except OSError as exc:
+            logger.warning(
+                "CodexClient: could not prepare lock-event log %s: %s", path, exc
+            )
+            return
+        self._lock_event_task = asyncio.create_task(self._tail_lock_events(path))
+        logger.debug("CodexClient: started lock-event tailer path=%s", path)
+
+    async def _stop_lock_event_tailer(self) -> None:
+        """Cancel the background tailer and drain final complete lines."""
+        lock_event_task = self._lock_event_task
+        if lock_event_task is not None and not lock_event_task.done():
+            lock_event_task.cancel()
+            try:
+                await lock_event_task
+            except asyncio.CancelledError:
+                pass
+            except Exception as exc:
+                logger.debug(
+                    "CodexClient lock-event tailer raised on shutdown: %s", exc
+                )
+        self._lock_event_task = None
+        await self._drain_configured_lock_events()
+
+    async def _tail_lock_events(self, path: Path) -> None:
+        """Tail Codex MCP lock-event JSONL and feed the deadlock monitor."""
+        try:
+            while True:
+                await self._drain_lock_events(path)
+                await asyncio.sleep(0.05)
+        except asyncio.CancelledError:
+            raise
+
+    async def _drain_configured_lock_events(self) -> None:
+        if self._runtime.lock_event_log_path is not None:
+            await self._drain_lock_events(self._runtime.lock_event_log_path)
+
+    async def _drain_lock_events(self, path: Path) -> None:
+        async with self._lock_event_drain_lock:
+            drained = 0
+            try:
+                with path.open("r", encoding="utf-8") as fh:
+                    fh.seek(self._lock_event_offset)
+                    while line := fh.readline():
+                        if not line.endswith("\n"):
+                            break
+                        next_offset = fh.tell()
+                        await self._handle_lock_event_line(line)
+                        self._lock_event_offset = next_offset
+                        drained += 1
+            except FileNotFoundError:
+                return
+            if drained:
+                logger.debug(
+                    "CodexClient: drained lock events count=%d path=%s", drained, path
+                )
+
+    async def _handle_lock_event_line(self, line: str) -> None:
+        stripped = line.strip()
+        if not stripped:
+            return
+        try:
+            data = json.loads(stripped)
+        except json.JSONDecodeError:
+            logger.warning(
+                "CodexClient: invalid lock-event JSONL line: %s", stripped[:200]
+            )
+            return
+        if not isinstance(data, dict):
+            return
+        try:
+            from src.core.models import LockEvent, LockEventType
+
+            event = LockEvent(
+                event_type=LockEventType(str(data["event_type"])),
+                agent_id=str(data["agent_id"]),
+                lock_path=str(data["lock_path"]),
+                timestamp=float(data["timestamp"]),
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            logger.warning(
+                "CodexClient: malformed lock-event payload %r: %s", data, exc
+            )
+            return
+
+        callback = self._runtime.lock_event_callback
+        if callback is None:
+            return
+        try:
+            result = callback(event)
+            if inspect.isawaitable(result):
+                await result
+        except Exception:
+            logger.exception(
+                "CodexClient: lock-event callback failed for agent=%s path=%s",
+                event.agent_id,
+                event.lock_path,
+            )

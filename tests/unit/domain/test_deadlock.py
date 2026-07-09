@@ -75,6 +75,48 @@ class TestWaitForGraph:
         # Agent is no longer waiting
         assert graph.detect_cycle() is None
 
+    def test_agent_can_wait_on_multiple_locks(self) -> None:
+        """One agent waiting on multiple files keeps all wait edges."""
+        graph = WaitForGraph()
+
+        graph.add_wait("agent-1", "/path/a.py")
+        graph.add_wait("agent-1", "/path/b.py")
+
+        assert graph.get_waited_locks("agent-1") == {"/path/a.py", "/path/b.py"}
+
+    def test_acquire_clears_only_matching_wait(self) -> None:
+        """Acquiring one waited lock leaves the agent's other waits intact."""
+        graph = WaitForGraph()
+        graph.add_wait("agent-1", "/path/a.py")
+        graph.add_wait("agent-1", "/path/b.py")
+
+        graph.add_hold("agent-1", "/path/a.py")
+
+        assert graph.get_waited_locks("agent-1") == {"/path/b.py"}
+
+    def test_multi_file_wait_cycle_with_downstream_waiter(self) -> None:
+        """Incident shape: multi-file waits do not hide the core cycle."""
+        graph = WaitForGraph()
+        graph.add_hold("engine-e3o9p.2.1", "crates/poker-solver/src/artifact/mod.rs")
+        graph.add_hold(
+            "engine-e3o9p.5.3", "crates/poker-solver/src/solver/dispatch/postflop.rs"
+        )
+        graph.add_hold("engine-e3o9p.5.3", "crates/poker-solver/src/artifact/write.rs")
+
+        graph.add_wait("engine-e3o9p.5.3", "crates/poker-solver/src/artifact/mod.rs")
+        graph.add_wait("engine-e3o9p.5.3", "crates/poker-solver/src/artifact/write.rs")
+        graph.add_wait("engine-e3o9p.6.7", "crates/poker-solver/src/artifact/mod.rs")
+        graph.add_wait(
+            "engine-e3o9p.6.7", "crates/poker-solver/src/solver/dispatch/postflop.rs"
+        )
+        graph.add_wait(
+            "engine-e3o9p.2.1", "crates/poker-solver/src/solver/dispatch/postflop.rs"
+        )
+
+        cycle = graph.detect_cycle()
+        assert cycle is not None
+        assert set(cycle) == {"engine-e3o9p.2.1", "engine-e3o9p.5.3"}
+
     def test_remove_agent_clears_all_state(self) -> None:
         """remove_agent clears holds and waits for that agent."""
         graph = WaitForGraph()
@@ -235,6 +277,50 @@ class TestDeadlockMonitor:
         assert set(result.cycle) == {"agent-a", "agent-b", "agent-c"}
         # Victim is agent-c (youngest, start_time=3000)
         assert result.victim_id == "agent-c"
+
+    async def test_multi_file_wait_deadlock_reports_cycle_edge_for_victim(self) -> None:
+        """Multi-file waits preserve the victim's true blocker in DeadlockInfo."""
+        monitor = DeadlockMonitor()
+        monitor.register_agent("engine-e3o9p.2.1", "issue-2", 1000.0)
+        monitor.register_agent("engine-e3o9p.5.3", "issue-5", 2000.0)
+        monitor.register_agent("engine-e3o9p.6.7", "issue-6", 3000.0)
+
+        mod = "crates/poker-solver/src/artifact/mod.rs"
+        postflop = "crates/poker-solver/src/solver/dispatch/postflop.rs"
+        write = "crates/poker-solver/src/artifact/write.rs"
+
+        await monitor.handle_event(
+            LockEvent(LockEventType.ACQUIRED, "engine-e3o9p.2.1", mod, 1001.0)
+        )
+        await monitor.handle_event(
+            LockEvent(LockEventType.ACQUIRED, "engine-e3o9p.5.3", postflop, 2001.0)
+        )
+        await monitor.handle_event(
+            LockEvent(LockEventType.ACQUIRED, "engine-e3o9p.5.3", write, 2002.0)
+        )
+
+        await monitor.handle_event(
+            LockEvent(LockEventType.WAITING, "engine-e3o9p.5.3", mod, 2003.0)
+        )
+        await monitor.handle_event(
+            LockEvent(LockEventType.WAITING, "engine-e3o9p.5.3", write, 2004.0)
+        )
+        await monitor.handle_event(
+            LockEvent(LockEventType.WAITING, "engine-e3o9p.6.7", mod, 3001.0)
+        )
+        await monitor.handle_event(
+            LockEvent(LockEventType.WAITING, "engine-e3o9p.6.7", postflop, 3002.0)
+        )
+
+        result = await monitor.handle_event(
+            LockEvent(LockEventType.WAITING, "engine-e3o9p.2.1", postflop, 1002.0)
+        )
+
+        assert result is not None
+        assert set(result.cycle) == {"engine-e3o9p.2.1", "engine-e3o9p.5.3"}
+        assert result.victim_id == "engine-e3o9p.5.3"
+        assert result.blocked_on == mod
+        assert result.blocker_id == "engine-e3o9p.2.1"
 
     async def test_unregister_clears_graph_state(self) -> None:
         """Unregistering an agent prevents deadlock detection involving it."""

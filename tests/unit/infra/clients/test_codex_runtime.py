@@ -18,7 +18,7 @@ Covers:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -50,6 +50,11 @@ def _make_builder(tmp_path: Path) -> CodexRuntimeBuilder:
         approval_policy="never",
         sandbox="danger-full-access",
     )
+
+
+class _FakeDeadlockMonitor:
+    async def handle_event(self, event: object) -> None:
+        del event
 
 
 @pytest.mark.unit
@@ -140,6 +145,50 @@ def test_default_mcp_servers_come_from_factory(tmp_path: Path) -> None:
     assert captured["agent_id"] == "agent-x"
     assert captured["repo_path"] == tmp_path
     assert captured["emit_lock_event"] is None
+
+
+@pytest.mark.unit
+def test_deadlock_monitor_allocates_codex_lock_event_side_channel(
+    tmp_path: Path,
+) -> None:
+    def factory(
+        agent_id: str, repo_path: Path, emit_lock_event: object
+    ) -> dict[str, object]:
+        del agent_id, repo_path, emit_lock_event
+        return {"mala-locking": {"command": "mala-codex-mcp-locking"}}
+
+    runtime = CodexRuntimeBuilder(
+        tmp_path,
+        "agent-x",
+        factory,
+        model="gpt-5.5",
+        effort=None,
+        approval_policy="never",
+        sandbox="danger-full-access",
+        deadlock_monitor=_FakeDeadlockMonitor(),
+    ).build()
+
+    assert runtime.lock_event_log_path is not None
+    assert runtime.lock_event_log_path.parent.name == "codex-lock-events"
+    assert runtime.lock_event_callback is not None
+    assert runtime.env["MALA_LOCK_EVENT_LOG"] == str(runtime.lock_event_log_path)
+
+    bundled = cast("dict[str, object]", runtime.mcp_servers["mala-locking"])
+    env = cast("dict[str, str]", bundled["env"])
+    assert env["MALA_LOCK_EVENT_LOG"] == str(runtime.lock_event_log_path)
+
+
+@pytest.mark.unit
+def test_without_deadlock_monitor_leaves_codex_lock_event_side_channel_unset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("MALA_LOCK_EVENT_LOG", "/tmp/stale-events.jsonl")
+
+    runtime = _make_builder(tmp_path).build()
+
+    assert runtime.lock_event_log_path is None
+    assert runtime.lock_event_callback is None
+    assert "MALA_LOCK_EVENT_LOG" not in runtime.env
 
 
 @pytest.mark.unit

@@ -32,6 +32,7 @@ Coverage:
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -47,7 +48,7 @@ from src.core.protocols.agent_event import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
+    from collections.abc import AsyncIterator, Callable
     from types import ModuleType
     from typing import Self
 
@@ -243,6 +244,29 @@ def _build_runtime(
     return builder.build()
 
 
+def _lock_event_line(event_type: str, agent_id: str, lock_path: str) -> str:
+    return json.dumps(
+        {
+            "event_type": event_type,
+            "agent_id": agent_id,
+            "lock_path": lock_path,
+            "timestamp": 123.0,
+        }
+    )
+
+
+async def _wait_until(condition: Callable[[], bool], *, timeout: float = 1.0) -> None:
+    import asyncio
+    import time
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if condition():
+            return
+        await asyncio.sleep(0.01)
+    raise AssertionError("condition was not satisfied before timeout")
+
+
 # ---------------------------------------------------------------------------
 # Lazy-import contract
 # ---------------------------------------------------------------------------
@@ -306,6 +330,153 @@ async def test_aenter_constructs_async_codex_with_runtime_env_and_cwd(
         assert client is not None
     assert fake_codex.close_calls == 1
     assert fake_codex.exit_calls == 0
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_lock_event_tailer_delivers_complete_jsonl_events(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CodexClient tails MCP lock-event JSONL into the monitor callback."""
+    from dataclasses import replace
+
+    from src.core.models import LockEvent, LockEventType
+    from src.infra.clients.codex_client import CodexClient
+
+    _install_fake_sdk(monkeypatch)
+    lock_event_path = tmp_path / "lock-events" / "agent-x.jsonl"
+    received: list[LockEvent] = []
+
+    async def callback(event: object) -> None:
+        import asyncio
+
+        assert isinstance(event, LockEvent)
+        await asyncio.sleep(0)
+        received.append(event)
+
+    base_runtime = _build_runtime(tmp_path)
+    runtime = replace(
+        base_runtime,
+        lock_event_log_path=lock_event_path,
+        lock_event_callback=callback,
+    )
+
+    async with CodexClient(runtime):
+        assert lock_event_path.exists()
+        lock_event_path.write_text(
+            "\n".join(
+                [
+                    _lock_event_line("acquired", "agent-x", "/work/a.py"),
+                    "{not-json}",
+                    _lock_event_line("waiting", "agent-x", "/work/b.py"),
+                ]
+            ),
+            encoding="utf-8",
+        )
+        await _wait_until(lambda: len(received) == 1)
+
+        with lock_event_path.open("a", encoding="utf-8") as fh:
+            fh.write("\n")
+            fh.write(_lock_event_line("released", "agent-x", "/work/a.py"))
+            fh.write("\n")
+        await _wait_until(lambda: len(received) == 3)
+
+    assert [event.event_type for event in received] == [
+        LockEventType.ACQUIRED,
+        LockEventType.WAITING,
+        LockEventType.RELEASED,
+    ]
+    assert [event.lock_path for event in received] == [
+        "/work/a.py",
+        "/work/b.py",
+        "/work/a.py",
+    ]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_lock_event_drain_does_not_duplicate_concurrent_drains(
+    tmp_path: Path,
+) -> None:
+    """Manual receive-boundary drains and the background tailer share one offset."""
+    import asyncio
+    from dataclasses import replace
+
+    from src.core.models import LockEvent
+    from src.infra.clients.codex_client import CodexClient
+
+    lock_event_path = tmp_path / "lock-events" / "agent-x.jsonl"
+    lock_event_path.parent.mkdir(parents=True)
+    lock_event_path.write_text(
+        _lock_event_line("waiting", "agent-x", "/work/a.py") + "\n",
+        encoding="utf-8",
+    )
+    received: list[LockEvent] = []
+    callback_started = asyncio.Event()
+
+    async def callback(event: object) -> None:
+        assert isinstance(event, LockEvent)
+        received.append(event)
+        callback_started.set()
+        await asyncio.sleep(0.01)
+
+    runtime = replace(
+        _build_runtime(tmp_path),
+        lock_event_log_path=lock_event_path,
+        lock_event_callback=callback,
+    )
+    client = CodexClient(runtime)
+
+    first = asyncio.create_task(client._drain_lock_events(lock_event_path))
+    await callback_started.wait()
+    second = asyncio.create_task(client._drain_lock_events(lock_event_path))
+    await asyncio.gather(first, second)
+
+    assert [event.lock_path for event in received] == ["/work/a.py"]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_lock_event_drain_retries_line_when_callback_is_cancelled(
+    tmp_path: Path,
+) -> None:
+    """A cancellation mid-callback must not advance past an undelivered event."""
+    import asyncio
+    from dataclasses import replace
+
+    from src.core.models import LockEvent
+    from src.infra.clients.codex_client import CodexClient
+
+    lock_event_path = tmp_path / "lock-events" / "agent-x.jsonl"
+    lock_event_path.parent.mkdir(parents=True)
+    lock_event_path.write_text(
+        _lock_event_line("waiting", "agent-x", "/work/a.py") + "\n",
+        encoding="utf-8",
+    )
+    received: list[LockEvent] = []
+    attempts = 0
+
+    async def callback(event: object) -> None:
+        nonlocal attempts
+        assert isinstance(event, LockEvent)
+        attempts += 1
+        if attempts == 1:
+            raise asyncio.CancelledError
+        received.append(event)
+
+    runtime = replace(
+        _build_runtime(tmp_path),
+        lock_event_log_path=lock_event_path,
+        lock_event_callback=callback,
+    )
+    client = CodexClient(runtime)
+
+    with pytest.raises(asyncio.CancelledError):
+        await client._drain_lock_events(lock_event_path)
+    await client._drain_lock_events(lock_event_path)
+
+    assert attempts == 2
+    assert [event.lock_path for event in received] == ["/work/a.py"]
 
 
 @pytest.mark.unit

@@ -68,6 +68,16 @@ class TestBuildBundledCodexMcpSpec:
         env = cast("dict[str, str]", spec["env"])
         assert env["MALA_LOCK_DIR"] == "/tmp/run-locks"
 
+    def test_env_forwards_mala_lock_event_log_when_set(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("MALA_LOCK_EVENT_LOG", "/tmp/events.jsonl")
+
+        spec = _build_bundled_codex_mcp_spec("agent-x", Path("/work/repo"))
+
+        env = cast("dict[str, str]", spec["env"])
+        assert env["MALA_LOCK_EVENT_LOG"] == "/tmp/events.jsonl"
+
 
 class TestBuildMergedCodexPluginMcpJson:
     def test_bundled_only_payload_when_no_user_servers(self) -> None:
@@ -85,6 +95,7 @@ class TestBuildMergedCodexPluginMcpJson:
             "MALA_AGENT_ID",
             "MALA_LOCK_DIR",
             "MALA_REPO_NAMESPACE",
+            "MALA_LOCK_EVENT_LOG",
         ]
 
     def test_user_non_clashing_servers_are_preserved(self) -> None:

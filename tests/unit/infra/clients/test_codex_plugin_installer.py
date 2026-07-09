@@ -155,6 +155,7 @@ def test_bundled_mcp_forwards_lock_context_env_vars() -> None:
         "MALA_AGENT_ID",
         "MALA_LOCK_DIR",
         "MALA_REPO_NAMESPACE",
+        "MALA_LOCK_EVENT_LOG",
     ]
 
 
