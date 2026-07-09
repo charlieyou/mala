@@ -326,7 +326,7 @@ _RUN_EFFORT_HELP = (
 )
 _MODEL_HELP = (
     "Coder model identifier for Claude and Codex coders. Defaults: "
-    "claude=opus[1m], codex=gpt-5.5. Ignored by Amp."
+    "claude=opus[1m], codex=gpt-5.6-sol. Ignored by Amp."
 )
 _CODEX_APPROVAL_POLICY_HELP = (
     "Codex approval policy. Valid: never, on-request, on-failure, untrusted. "

@@ -45,7 +45,7 @@ def test_factory_returns_codex_provider_when_coder_codex() -> None:
     provider = _create_agent_provider(config)
     assert isinstance(provider, CodexAgentProvider)
     assert provider.name == "codex"
-    assert provider.model == "gpt-5.5"
+    assert provider.model == "gpt-5.6-sol"
     assert provider.effort == "medium"
 
 
@@ -59,7 +59,7 @@ def test_factory_threads_resolved_coder_options_to_provider() -> None:
         runs_dir=Path("/tmp/runs"),
         lock_dir=Path("/tmp/locks"),
         coder="codex",
-        model="gpt-5.5-foo",
+        model="gpt-5.6-sol-foo",
         effort="medium",
         coder_options=CoderOptions(
             codex=CodexOptions(
@@ -71,7 +71,7 @@ def test_factory_threads_resolved_coder_options_to_provider() -> None:
     )
     provider = _create_agent_provider(config)
     assert isinstance(provider, CodexAgentProvider)
-    assert provider.model == "gpt-5.5-foo"
+    assert provider.model == "gpt-5.6-sol-foo"
     assert provider.effort == "medium"
     assert provider.approval_policy == "on-request"
     assert provider.sandbox == "workspace-write"
@@ -200,7 +200,7 @@ def test_cli_codex_selects_provider_with_default_options(
     assert result.exit_code == 0, result.output
     provider = _DummyOrchestrator.last_provider
     assert isinstance(provider, CodexAgentProvider)
-    assert provider.model == "gpt-5.5"
+    assert provider.model == "gpt-5.6-sol"
     assert provider.effort == "medium"
     assert provider.approval_policy == "never"
     assert provider.sandbox == "danger-full-access"
@@ -216,7 +216,7 @@ def test_yaml_codex_options_reach_provider(
     (tmp_path / "mala.yaml").write_text(
         "preset: python-uv\n"
         "coder: codex\n"
-        "model: gpt-5.5-foo\n"
+        "model: gpt-5.6-sol-foo\n"
         "effort: high\n"
         "coder_options:\n"
         "  codex:\n"
@@ -234,7 +234,7 @@ def test_yaml_codex_options_reach_provider(
     assert result.exit_code == 0, result.output
     provider = _DummyOrchestrator.last_provider
     assert isinstance(provider, CodexAgentProvider)
-    assert provider.model == "gpt-5.5-foo"
+    assert provider.model == "gpt-5.6-sol-foo"
     assert provider.effort == "high"
     assert provider.approval_policy == "on-request"
     assert provider.sandbox == "workspace-write"
@@ -247,7 +247,7 @@ def test_env_coder_codex_reaches_provider(
 
     _isolate_env(monkeypatch)
     monkeypatch.setenv("MALA_CODER", "codex")
-    monkeypatch.setenv("MALA_MODEL", "gpt-5.5-env")
+    monkeypatch.setenv("MALA_MODEL", "gpt-5.6-sol-env")
 
     cli = _reload_cli(monkeypatch)
     _patch_orchestrator(monkeypatch, cli, tmp_path)
@@ -259,7 +259,7 @@ def test_env_coder_codex_reaches_provider(
     assert result.exit_code == 0, result.output
     provider = _DummyOrchestrator.last_provider
     assert isinstance(provider, CodexAgentProvider)
-    assert provider.model == "gpt-5.5-env"
+    assert provider.model == "gpt-5.6-sol-env"
 
 
 def test_invalid_codex_yaml_rejected_at_load_time(
@@ -299,7 +299,7 @@ def test_cli_overrides_yaml_model(
     (tmp_path / "mala.yaml").write_text(
         "preset: python-uv\n"
         "coder: codex\n"
-        "model: gpt-5.5-yaml\n",
+        "model: gpt-5.6-sol-yaml\n",
     )
 
     cli = _reload_cli(monkeypatch)
@@ -309,10 +309,10 @@ def test_cli_overrides_yaml_model(
     runner = CliRunner()
     result = runner.invoke(
         cli.app,
-        ["run", str(tmp_path), "--model", "gpt-5.5-cli"],
+        ["run", str(tmp_path), "--model", "gpt-5.6-sol-cli"],
     )
 
     assert result.exit_code == 0, result.output
     provider = _DummyOrchestrator.last_provider
     assert isinstance(provider, CodexAgentProvider)
-    assert provider.model == "gpt-5.5-cli"
+    assert provider.model == "gpt-5.6-sol-cli"

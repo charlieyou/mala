@@ -511,7 +511,7 @@ class TestModelPrecedence:
 
     def test_codex_default_model(self) -> None:
         config = MalaConfig.from_env(validate=False, yaml_coder="codex")
-        assert config.model == "gpt-5.5"
+        assert config.model == "gpt-5.6-sol"
 
     def test_yaml_model_used_when_env_absent(self) -> None:
         config = MalaConfig.from_env(validate=False, yaml_model="custom-model")
@@ -532,7 +532,7 @@ class TestModelPrecedence:
     def test_cli_coder_override_recomputes_default_model(self) -> None:
         config = MalaConfig.from_env(validate=False)
         resolved = build_resolved_config(config, CLIOverrides(coder="codex"))
-        assert resolved.model == "gpt-5.5"
+        assert resolved.model == "gpt-5.6-sol"
         assert resolved.model_is_default is True
 
     def test_cli_coder_override_preserves_explicit_yaml_model(self) -> None:

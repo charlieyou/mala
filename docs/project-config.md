@@ -86,7 +86,7 @@ claude_settings_sources: list     # Optional. SDK settings sources (default: [lo
 
 coder: string                    # Optional. Coder backend: "claude", "amp", or "codex" (default: claude)
 amp_mode: string                 # Optional. Amp mode: "smart", "rush", "deep" (default: deep). Only consulted when coder: amp.
-model: string                    # Optional. Model for Claude/Codex (defaults: claude=opus[1m], codex=gpt-5.5). Ignored by Amp.
+model: string                    # Optional. Model for Claude/Codex (defaults: claude=opus[1m], codex=gpt-5.6-sol). Ignored by Amp.
 effort: string | null            # Optional. Reasoning effort for Claude/Codex/supported Amp modes.
 
 coder_options:                   # Optional. Per-coder option blocks.
@@ -151,7 +151,7 @@ validation_triggers:             # Optional. See validation-triggers.md
 | `claude_settings_sources` | list | No | SDK settings sources: `local`, `project`, `user` (default: `[local, project]`) |
 | `coder` | string | No | Coder backend: `claude`, `amp`, or `codex` (default: `claude`). Overridden by `--coder` / `MALA_CODER`. See [Coder Selection](#coder-selection). |
 | `amp_mode` | string | No | Amp execution mode: `smart`, `rush`, or `deep` (default: `deep`). Only consulted when `coder: amp`. |
-| `model` | string | No | Model for Claude and Codex coders. Defaults: `claude=opus[1m]`, `codex=gpt-5.5`. Overridden by `--model` / `MALA_MODEL`. Ignored by Amp. |
+| `model` | string | No | Model for Claude and Codex coders. Defaults: `claude=opus[1m]`, `codex=gpt-5.6-sol`. Overridden by `--model` / `MALA_MODEL`. Ignored by Amp. |
 | `effort` | string | No | Reasoning effort for Claude, Codex, and supported Amp modes. Overridden by `--effort` / `MALA_EFFORT`. |
 | `coder_options` | object | No | Per-coder option block. See [Codex Coder Options](#codex-coder-options). Only consulted when the matching coder is selected. |
 | `coder_options.codex.approval_policy` | string | No | Codex approval policy: `never`, `on-request`, `on-failure`, `untrusted` (default: `never`). Overridden by `--codex-approval-policy` / `MALA_CODEX_APPROVAL_POLICY`. |
@@ -647,7 +647,7 @@ amp_mode: deep    # deep (GPT-5 reasoning, default), smart (Opus), rush (Haiku)
 ```yaml
 # Select the Codex coder
 coder: codex
-model: gpt-5.5
+model: gpt-5.6-sol
 effort: high
 coder_options:
   codex:
@@ -666,7 +666,7 @@ Existing config files **without `coder:` remain valid** and default to
 1. CLI flag (`--coder`, `--amp-mode`, `--model`, `--effort`, `--codex-approval-policy`, `--codex-sandbox`)
 2. Environment variable (`MALA_CODER`, `MALA_AMP_MODE`, `MALA_MODEL`, `MALA_EFFORT`, `MALA_CODEX_APPROVAL_POLICY`, `MALA_CODEX_SANDBOX`)
 3. Selected project config (`coder:`, `amp_mode:`, `model:`, `effort:`, `coder_options.codex.*`)
-4. Defaults: `coder=claude`, `amp_mode=deep`, `claude.model=opus[1m]`, `codex.model=gpt-5.5`, `codex.approval_policy=never`, `codex.sandbox=danger-full-access`
+4. Defaults: `coder=claude`, `amp_mode=deep`, `claude.model=opus[1m]`, `codex.model=gpt-5.6-sol`, `codex.approval_policy=never`, `codex.sandbox=danger-full-access`
 
 ### Validation
 
@@ -677,7 +677,7 @@ starts:
 |-------|----------------|
 | `coder` | `claude`, `amp`, `codex` |
 | `amp_mode` | `smart`, `rush`, `deep` |
-| `model` | non-empty string (e.g., `opus[1m]` or `gpt-5.5`); confirmed against the live backend at run time |
+| `model` | non-empty string (e.g., `opus[1m]` or `gpt-5.6-sol`); confirmed against the live backend at run time |
 | `effort` | `low`, `medium`, `high`, `xhigh`, `max` (Amp modes further restrict supported values) |
 | `coder_options.codex.approval_policy` | `never`, `on-request`, `on-failure`, `untrusted` |
 | `coder_options.codex.sandbox` | `read-only`, `workspace-write`, `danger-full-access` |
@@ -727,7 +727,7 @@ All fields are optional; omitted fields fall through to the documented defaults.
 
 ```yaml
 coder: codex
-model: gpt-5.5                    # default; latest gpt-5.5 family release
+model: gpt-5.6-sol                    # default; latest gpt-5.6-sol family release
 effort: high                      # passed through to Codex per turn
 coder_options:
   codex:
@@ -767,7 +767,7 @@ evidence_check:
 ```yaml
 preset: python-uv
 coder: codex
-model: gpt-5.5
+model: gpt-5.6-sol
 effort: high
 evidence_check:
   required: [test, lint]

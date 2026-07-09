@@ -92,7 +92,7 @@ stream-json contract.
 ### Codex (for `coder: codex`)
 
 Mala can drive its per-issue implementation agent on OpenAI's
-[`codex app-server`](https://developers.openai.com/codex/sdk) (`gpt-5.5`
+[`codex app-server`](https://developers.openai.com/codex/sdk) (`gpt-5.6-sol`
 family) instead of Claude or Amp. Codex is opt-in via `--coder codex` /
 `MALA_CODER=codex` / `coder: codex` in `mala.yaml`; the default remains
 `coder: claude`.
@@ -136,7 +136,7 @@ error.
 
 | Option | Default | Why |
 |--------|---------|-----|
-| `model` | `gpt-5.5` | Latest gpt-5.5 family release |
+| `model` | `gpt-5.6-sol` | Latest gpt-5.6-sol family release |
 | `effort` | `medium` | Shared coder reasoning-effort default for Codex |
 | `approval_policy` | `never` | Unattended-run posture; bundled hook is the gate |
 | `sandbox` | `danger-full-access` | Same posture as Amp's `--dangerously-allow-all` |
@@ -186,8 +186,8 @@ mala run --watch /path/to/repo             # Keep polling for new issues
 mala run --config mala.codex.yaml /path/to/repo  # Use an alternate project config
 mala run --coder amp /path/to/repo         # Use Amp instead of Claude as the per-issue coder
 mala run --coder amp --amp-mode rush /path/to/repo  # Amp in rush mode (Haiku)
-mala run --coder codex /path/to/repo       # Use Codex (gpt-5.5) as the per-issue coder
-mala run --coder codex --model gpt-5.5 --effort high /path/to/repo
+mala run --coder codex /path/to/repo       # Use Codex (gpt-5.6-sol) as the per-issue coder
+mala run --coder codex --model gpt-5.6-sol --effort high /path/to/repo
 mala status                               # Check locks, config, logs
 mala status --all                          # Show running instances across directories
 mala logs list                            # List recent runs

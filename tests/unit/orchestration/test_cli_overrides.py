@@ -97,14 +97,14 @@ class TestApplyCLIOverrides:
             config,
             CLIOverrideOptions(
                 coder="codex",
-                model="gpt-5.5",
+                model="gpt-5.6-sol",
                 effort="high",
                 codex_approval_policy="never",
                 codex_sandbox="workspace-write",
             ),
         )
         assert result.coder == "codex"
-        assert result.model == "gpt-5.5"
+        assert result.model == "gpt-5.6-sol"
         assert result.effort == "high"
         codex = result.coder_options.codex
         assert codex.approval_policy == "never"

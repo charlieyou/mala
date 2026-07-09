@@ -205,7 +205,7 @@ the main coder.
 |------|---------|-------------|
 | `--coder` | `claude` | Coder backend: `claude`, `amp`, or `codex`. Validated at parse time. |
 | `--amp-mode` | `deep` | Amp execution mode: `smart`, `rush`, or `deep`. Only consulted when `coder=amp`. |
-| `--model` | backend default | Coder model identifier for Claude and Codex coders. Defaults: `claude=opus[1m]`, `codex=gpt-5.5`. Ignored by Amp. |
+| `--model` | backend default | Coder model identifier for Claude and Codex coders. Defaults: `claude=opus[1m]`, `codex=gpt-5.6-sol`. Ignored by Amp. |
 | `--effort` | backend default | Reasoning effort forwarded to Claude and Codex coders, and to Amp smart/deep modes. Defaults: `claude=xhigh`, `codex=medium`, `amp smart=xhigh`, `amp deep=medium`. |
 | `--codex-approval-policy` | `never` | Codex approval policy: `never`, `on-request`, `on-failure`, `untrusted`. Only consulted when `coder=codex`. |
 | `--codex-sandbox` | `danger-full-access` | Codex sandbox mode: `read-only`, `workspace-write`, `danger-full-access`. Only consulted when `coder=codex`. |
@@ -219,7 +219,7 @@ All coder flags follow the same **CLI > env > yaml > default** precedence as
 |---------|-----|-----|------|---------|
 | Coder | `--coder claude` | `MALA_CODER=claude` | `coder: claude` | `claude` |
 | Amp mode | `--amp-mode rush` | `MALA_AMP_MODE=rush` | `amp_mode: rush` | `deep` |
-| Coder model | `--model gpt-5.5` | `MALA_MODEL=gpt-5.5` | `model: gpt-5.5` | backend default |
+| Coder model | `--model gpt-5.6-sol` | `MALA_MODEL=gpt-5.6-sol` | `model: gpt-5.6-sol` | backend default |
 | Coder effort | `--effort high` | `MALA_EFFORT=high` | `effort: high` | backend default |
 | Codex approval policy | `--codex-approval-policy never` | `MALA_CODEX_APPROVAL_POLICY=never` | `coder_options.codex.approval_policy: never` | `never` |
 | Codex sandbox | `--codex-sandbox danger-full-access` | `MALA_CODEX_SANDBOX=danger-full-access` | `coder_options.codex.sandbox: danger-full-access` | `danger-full-access` |
@@ -247,15 +247,15 @@ mala run --coder amp /path/to/repo
 # Run with Amp in rush mode (Haiku) for cheaper iteration
 mala run --coder amp --amp-mode rush /path/to/repo
 
-# Run with Codex (gpt-5.5)
+# Run with Codex (gpt-5.6-sol)
 mala run --coder codex /path/to/repo
 
 # Run with Codex at high reasoning effort
-mala run --coder codex --model gpt-5.5 --effort high /path/to/repo
+mala run --coder codex --model gpt-5.6-sol --effort high /path/to/repo
 
 # Same via env (CI-friendly)
 MALA_CODER=amp MALA_AMP_MODE=deep mala run /path/to/repo
-MALA_CODER=codex MALA_MODEL=gpt-5.5 mala run /path/to/repo
+MALA_CODER=codex MALA_MODEL=gpt-5.6-sol mala run /path/to/repo
 ```
 
 **Amp prerequisites:** binary install (npm install is unsupported), Bun runtime

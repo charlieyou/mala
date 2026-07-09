@@ -45,7 +45,7 @@ def _make_builder(tmp_path: Path) -> CodexRuntimeBuilder:
         tmp_path,
         "agent-x",
         _empty_factory(),
-        model="gpt-5.5",
+        model="gpt-5.6-sol",
         effort=None,
         approval_policy="never",
         sandbox="danger-full-access",
@@ -63,7 +63,7 @@ def test_build_threads_constructor_options_to_runtime(tmp_path: Path) -> None:
         tmp_path,
         "agent-x",
         _empty_factory(),
-        model="gpt-5.5-foo",
+        model="gpt-5.6-sol-foo",
         effort="medium",
         approval_policy="on-request",
         sandbox="workspace-write",
@@ -73,7 +73,7 @@ def test_build_threads_constructor_options_to_runtime(tmp_path: Path) -> None:
     assert isinstance(runtime, CodexRuntime)
     assert runtime.cwd == tmp_path
     assert runtime.agent_id == "agent-x"
-    assert runtime.model == "gpt-5.5-foo"
+    assert runtime.model == "gpt-5.6-sol-foo"
     assert runtime.effort == "medium"
     assert runtime.approval_policy == "on-request"
     assert runtime.sandbox == "workspace-write"
@@ -108,7 +108,7 @@ def test_with_mcp_overrides_injected_factory(tmp_path: Path) -> None:
         tmp_path,
         "agent-x",
         loud_factory,
-        model="gpt-5.5",
+        model="gpt-5.6-sol",
         effort=None,
         approval_policy="never",
         sandbox="danger-full-access",
@@ -134,7 +134,7 @@ def test_default_mcp_servers_come_from_factory(tmp_path: Path) -> None:
         tmp_path,
         "agent-x",
         factory,
-        model="gpt-5.5",
+        model="gpt-5.6-sol",
         effort=None,
         approval_policy="never",
         sandbox="danger-full-access",
@@ -161,7 +161,7 @@ def test_deadlock_monitor_allocates_codex_lock_event_side_channel(
         tmp_path,
         "agent-x",
         factory,
-        model="gpt-5.5",
+        model="gpt-5.6-sol",
         effort=None,
         approval_policy="never",
         sandbox="danger-full-access",

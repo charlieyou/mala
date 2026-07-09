@@ -234,7 +234,7 @@ def _build_runtime(
         tmp_path,
         "agent-x",
         factory,
-        model="gpt-5.5",
+        model="gpt-5.6-sol",
         effort="medium",
         approval_policy="never",
         sandbox="danger-full-access",
@@ -549,7 +549,7 @@ async def test_query_starts_thread_with_runtime_settings(
         await client.query("hello world")
         assert len(fake_codex.threads_started) == 1
         kwargs = fake_codex.threads_started[0]
-        assert kwargs["model"] == "gpt-5.5"
+        assert kwargs["model"] == "gpt-5.6-sol"
         assert kwargs["sandbox"] == "danger-full-access"
         assert kwargs["approval_policy"] == "never"
         assert kwargs["cwd"] == str(tmp_path)
@@ -642,7 +642,7 @@ async def test_query_uses_compat_thread_start_for_priority_service_tier(
     method, params, _ = requests[0]
     assert method == "thread/start"
     assert params is not None
-    assert params["model"] == "gpt-5.5"
+    assert params["model"] == "gpt-5.6-sol"
     assert params["approvalPolicy"] == "never"
     assert params["sandbox"] == "danger-full-access"
     assert params["cwd"] == str(tmp_path)

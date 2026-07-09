@@ -3,7 +3,7 @@
 The yaml shape is:
 
     coder: codex
-    model: gpt-5.5
+    model: gpt-5.6-sol
     effort: high
     coder_options:
       codex:
@@ -132,7 +132,7 @@ class TestCodexBlock:
         cfg = parse_validation_config(
             {
                 "coder": "codex",
-                "model": "gpt-5.5-foo",
+                "model": "gpt-5.6-sol-foo",
                 "effort": "high",
                 "coder_options": {
                     "codex": {
@@ -143,7 +143,7 @@ class TestCodexBlock:
             }
         )
         assert cfg.coder == "codex"
-        assert cfg.model == "gpt-5.5-foo"
+        assert cfg.model == "gpt-5.6-sol-foo"
         assert cfg.effort == "high"
         assert cfg.codex_options is not None
         assert cfg.codex_options.approval_policy == "never"
@@ -160,7 +160,7 @@ class TestLoadConfig:
         repo = _yaml(
             tmp_path,
             "preset: python-uv\ncoder: codex\n"
-            "model: gpt-5.5-foo\n"
+            "model: gpt-5.6-sol-foo\n"
             "coder_options:\n"
             "  codex:\n"
             "    approval_policy: never\n"
@@ -168,7 +168,7 @@ class TestLoadConfig:
         )
         cfg = load_config(repo)
         assert cfg.coder == "codex"
-        assert cfg.model == "gpt-5.5-foo"
+        assert cfg.model == "gpt-5.6-sol-foo"
 
     def test_invalid_sandbox_rejected_via_load_config(self, tmp_path: Path) -> None:
         repo = _yaml(

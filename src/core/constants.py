@@ -87,7 +87,7 @@ VALID_CODEX_APPROVAL_POLICIES: frozenset[str] = frozenset(
 VALID_CODEX_SANDBOXES: frozenset[str] = frozenset(
     {"read-only", "workspace-write", "danger-full-access"}
 )
-DEFAULT_CODEX_MODEL: str = "gpt-5.5"
+DEFAULT_CODEX_MODEL: str = "gpt-5.6-sol"
 DEFAULT_CODEX_APPROVAL_POLICY: Literal[
     "never", "on-request", "on-failure", "untrusted"
 ] = "never"

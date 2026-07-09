@@ -206,7 +206,7 @@ def test_provider_conforms_to_agent_provider_protocol() -> None:
 def test_default_options_match_unattended_run_defaults() -> None:
     """Defaults for unattended Codex runs."""
     provider = CodexAgentProvider()
-    assert provider.model == "gpt-5.5"
+    assert provider.model == "gpt-5.6-sol"
     assert provider.effort == "medium"
     assert provider.approval_policy == "never"
     assert provider.sandbox == "danger-full-access"
@@ -258,7 +258,7 @@ def test_runtime_builder_threads_resolved_options(
     :class:`CodexRuntimeBuilder` -> :class:`CodexRuntime`.
     """
     provider = CodexAgentProvider(
-        model="gpt-5.5-foo",
+        model="gpt-5.6-sol-foo",
         effort="medium",
         approval_policy="on-request",
         sandbox="workspace-write",
@@ -270,7 +270,7 @@ def test_runtime_builder_threads_resolved_options(
     assert isinstance(builder, CodexRuntimeBuilder)
     runtime = builder.build()
     assert isinstance(runtime, CodexRuntime)
-    assert runtime.model == "gpt-5.5-foo"
+    assert runtime.model == "gpt-5.6-sol-foo"
     assert runtime.effort == "medium"
     assert runtime.approval_policy == "on-request"
     assert runtime.sandbox == "workspace-write"

@@ -193,7 +193,7 @@ async def test_provider_runtime_client_end_to_end_smoke(
     )
 
     provider = CodexAgentProvider(
-        model="gpt-5.5-foo",
+        model="gpt-5.6-sol-foo",
         effort="medium",
         approval_policy="never",
         sandbox="danger-full-access",
@@ -203,7 +203,7 @@ async def test_provider_runtime_client_end_to_end_smoke(
         tmp_path, "agent-x", mcp_server_factory=_empty_factory()
     ).build()
     assert isinstance(runtime, CodexRuntime)
-    assert runtime.model == "gpt-5.5-foo"
+    assert runtime.model == "gpt-5.6-sol-foo"
     assert runtime.mcp_servers == {
         "mala-locking": {"command": "mala-codex-mcp-locking"}
     }
@@ -229,7 +229,7 @@ async def test_provider_runtime_client_end_to_end_smoke(
     # ``AppServerConfig`` instead.
     assert len(fake_codex.started_kwargs) == 1
     started = fake_codex.started_kwargs[0]
-    assert started["model"] == "gpt-5.5-foo"
+    assert started["model"] == "gpt-5.6-sol-foo"
     assert started["sandbox"] == "danger-full-access"
     assert started["approval_policy"] == "never"
     assert started["cwd"] == str(tmp_path)

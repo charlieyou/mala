@@ -167,10 +167,10 @@ class TestValidateModelOption:
     """Coder model parsing is shape-only: any non-empty value passes through."""
 
     def test_passes_through_non_empty(self) -> None:
-        assert validate_model_option("gpt-5.5") == "gpt-5.5"
+        assert validate_model_option("gpt-5.6-sol") == "gpt-5.6-sol"
 
     def test_strips_whitespace(self) -> None:
-        assert validate_model_option("  gpt-5.5  ") == "gpt-5.5"
+        assert validate_model_option("  gpt-5.6-sol  ") == "gpt-5.6-sol"
 
     def test_empty_and_whitespace_treated_as_none(self) -> None:
         assert validate_model_option(None) is None

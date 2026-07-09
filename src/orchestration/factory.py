@@ -34,6 +34,8 @@ import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
 
+from src.core.constants import DEFAULT_CODEX_MODEL
+
 from .config_resolution import (
     _ReviewerConfig,
     _derive_config,
@@ -144,7 +146,7 @@ def _create_agent_provider(
         return cast(
             "AgentProvider",
             CodexAgentProvider(
-                model=mala_config.model or "gpt-5.5",
+                model=mala_config.model or DEFAULT_CODEX_MODEL,
                 effort=mala_config.effort,
                 approval_policy=codex.approval_policy,
                 sandbox=codex.sandbox,
