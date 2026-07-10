@@ -516,10 +516,9 @@ class AgentSessionRunner:
             state: Mutable session execution state.
             tracer: Optional telemetry span context.
             drain_event: Set on the first Ctrl-C (drain); forwarded to
-                ``execute_iteration`` so the between-turn background wait stops
-                promptly.
-            interrupt_event: Set on abort (second Ctrl-C); forwarded for the
-                same reason.
+                ``execute_iteration`` while the active issue continues to wait.
+            interrupt_event: Set on abort (second Ctrl-C); interrupts active
+                between-turn background and lock waits.
         """
         lifecycle = state.lifecycle
         lifecycle_ctx = state.lifecycle_ctx
@@ -571,6 +570,12 @@ class AgentSessionRunner:
                 if iter_result.session_id is not None:
                     state.session_id = iter_result.session_id
                 pending_query = None
+
+                # A between-turn wait returns control so the SDK client can be
+                # torn down cleanly on abort. Do not let that successful launch
+                # turn advance into lifecycle completion or the gate while the
+                # run-level interrupt is set.
+                InterruptGuard(interrupt_event).raise_if_interrupted()
 
                 if not iter_result.success:
                     # A failed long-running background wait (timeout) or a resume
@@ -1087,9 +1092,8 @@ class AgentSessionRunner:
             tracer: Optional telemetry span context.
             interrupt_event: Optional event to check for SIGINT interrupts
                 (set on abort / second Ctrl-C).
-            drain_event: Optional event set on the first Ctrl-C (drain). Used to
-                break the between-turn background wait promptly so a backgrounded
-                long-running task does not look like a hang.
+            drain_event: Optional event set on the first Ctrl-C (drain). Stops
+                new issue intake while active background and lock waits continue.
 
         Returns:
             AgentSessionOutput with success, summary, session_id, etc.

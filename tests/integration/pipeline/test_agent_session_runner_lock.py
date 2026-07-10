@@ -181,6 +181,18 @@ class _FakeLockWaitProbe:
         return [p for p in canonical_paths if p in self.blocked]
 
 
+@dataclass
+class _ControllableLockWaitProbe:
+    """Event-driven probe for signals that arrive while a lock wait is active."""
+
+    blocked: bool = True
+    poll_started: asyncio.Event = field(default_factory=asyncio.Event)
+
+    def blocked_paths(self, canonical_paths: Sequence[str]) -> list[str]:
+        self.poll_started.set()
+        return list(canonical_paths) if self.blocked else []
+
+
 def _make_policy(
     client: _FakeSDKClient,
     *,
@@ -203,8 +215,9 @@ async def _run(
     client: _FakeSDKClient,
     *,
     lock_wait: LockWaitConfig | None,
-    probe: _FakeLockWaitProbe | None,
+    probe: _FakeLockWaitProbe | _ControllableLockWaitProbe | None,
     drain_event: asyncio.Event | None = None,
+    interrupt_event: asyncio.Event | None = None,
     event_sink: BaseEventSink | None = None,
     state: MessageIterationState | None = None,
 ) -> IterationResult:
@@ -222,6 +235,7 @@ async def _run(
         lock_wait_probe=cast("idle_retry_policy.LockWaitProbe", probe),
         hard_timeout_seconds=300.0,
         drain_event=drain_event,
+        interrupt_event=interrupt_event,
     )
 
 
@@ -268,31 +282,61 @@ async def test_never_frees_resumes_with_status_unavailable() -> None:
 
 
 @pytest.mark.asyncio
-async def test_drain_interrupts_wait_and_abandons_state() -> None:
-    """A drain signal ends the park promptly and proceeds to the gate.
-
-    With no fix the wait would spin until the budget elapsed; the drain event
-    breaks it, no resume is issued, success is returned, and the parked state is
-    cleared so a later gate-retry iteration does not re-wait.
-    """
-    client = _FakeSDKClient(per_turn_responses=[_park_turn_events()])
-    # free_after far beyond the deadline -> the path never frees on its own, so
-    # only the pre-set drain signal can end the park.
-    probe = _FakeLockWaitProbe(blocked=[_WAIT_PATH], free_after=10_000)
-    drain = asyncio.Event()
-    drain.set()
-    state = MessageIterationState()
-    result = await _run(
-        client,
-        lock_wait=LockWaitConfig(max_wait_seconds=600, poll_interval_ms=1),
-        probe=probe,
-        drain_event=drain,
-        state=state,
+async def test_drain_allows_lock_wait_to_finish() -> None:
+    """A drain arriving mid-park leaves the lock wait active until release."""
+    client = _FakeSDKClient(
+        per_turn_responses=[_park_turn_events(), _finalize_turn_events()],
     )
+    probe = _ControllableLockWaitProbe()
+    drain = asyncio.Event()
+    task = asyncio.create_task(
+        _run(
+            client,
+            lock_wait=LockWaitConfig(max_wait_seconds=600, poll_interval_ms=1),
+            probe=probe,
+            drain_event=drain,
+        )
+    )
+    await asyncio.wait_for(probe.poll_started.wait(), timeout=1.0)
 
-    assert result.success is True  # proceeds to the gate
-    assert len(client.queries) == 1  # no resume issued
-    # The abandon path cleared the parked state for later gate-retry iterations.
+    drain.set()
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(asyncio.shield(task), timeout=0.01)
+
+    probe.blocked = False
+    result = await asyncio.wait_for(task, timeout=1.0)
+
+    assert result.success is True
+    assert len(client.queries) == 2
+    assert "status=free" in client.queries[1]
+
+
+@pytest.mark.asyncio
+async def test_abort_interrupts_lock_wait_and_abandons_state() -> None:
+    """An abort wakes a parked wait promptly despite a long poll interval."""
+    client = _FakeSDKClient(per_turn_responses=[_park_turn_events()])
+    probe = _ControllableLockWaitProbe()
+    interrupt = asyncio.Event()
+    state = MessageIterationState()
+    task = asyncio.create_task(
+        _run(
+            client,
+            lock_wait=LockWaitConfig(
+                max_wait_seconds=600,
+                poll_interval_ms=60_000,
+            ),
+            probe=probe,
+            interrupt_event=interrupt,
+            state=state,
+        )
+    )
+    await asyncio.wait_for(probe.poll_started.wait(), timeout=1.0)
+
+    interrupt.set()
+    result = await asyncio.wait_for(task, timeout=0.2)
+
+    assert result.success is True
+    assert len(client.queries) == 1
     assert state.pending_lock_waits == set()
     assert state.lock_wait_request_ids == set()
 

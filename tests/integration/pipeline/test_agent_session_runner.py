@@ -389,6 +389,53 @@ class TestAgentSessionRunnerBasics:
         assert output.duration_seconds > 0
 
     @pytest.mark.asyncio
+    async def test_interrupt_after_iteration_skips_gate(
+        self,
+        session_config: _SessionPair,
+        fake_factory: FakeSDKClientFactory,
+    ) -> None:
+        """Abort returned from a between-turn wait cannot advance into the gate."""
+        from src.pipeline.idle_retry_policy import IterationResult
+
+        interrupt = asyncio.Event()
+        gate_issues: list[str] = []
+
+        async def on_gate_check(
+            issue_id: str, log_path: Path, retry_state: RetryState
+        ) -> tuple[GateResult, int]:
+            del log_path, retry_state
+            gate_issues.append(issue_id)
+            return GateResult(passed=True), 0
+
+        runner = AgentSessionRunner(
+            view=session_config.view,
+            config=session_config.config,
+            agent_provider=FakeAgentProvider(fake_factory),
+            gate_runner=StubGateRunner(on_gate_check=on_gate_check),
+            review_runner=StubReviewRunner(),
+            session_lifecycle=StubSessionLifecycle(),
+        )
+
+        async def interrupted_iteration(**kwargs: object) -> IterationResult:
+            del kwargs
+            interrupt.set()
+            return IterationResult(success=True, session_id="interrupted-session")
+
+        with patch.object(
+            runner._retry_policy,
+            "execute_iteration",
+            interrupted_iteration,
+        ):
+            output = await runner.run_session(
+                AgentSessionInput(issue_id="abort-race", prompt="work"),
+                interrupt_event=interrupt,
+            )
+
+        assert output.interrupted is True
+        assert output.success is False
+        assert gate_issues == []
+
+    @pytest.mark.asyncio
     async def test_run_session_sends_initial_query(
         self,
         session_config: _SessionPair,

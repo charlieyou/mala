@@ -84,7 +84,9 @@ def _launch_turn_events(tool_use_id: str = _LAUNCH_TOOL_USE_ID) -> list[object]:
     ]
 
 
-def _auto_background_turn_events(tool_use_id: str = _LAUNCH_TOOL_USE_ID) -> list[object]:
+def _auto_background_turn_events(
+    tool_use_id: str = _LAUNCH_TOOL_USE_ID,
+) -> list[object]:
     """A Bash command that Claude auto-backgrounds after launch."""
     return [
         AgentToolUseEvent(
@@ -138,9 +140,10 @@ class _FakeSDKClient:
     queries: list[str] = field(default_factory=list)
     stopped_task_ids: list[str] = field(default_factory=list)
     receive_messages_calls: int = 0
+    receive_messages_started: asyncio.Event = field(default_factory=asyncio.Event)
     # When set, ``receive_messages`` blocks on this event before yielding —
     # simulating the real "completion notification never arrives" hang so a
-    # drain signal is the only way out.
+    # timeout or abort signal is the only way out.
     block_event: asyncio.Event | None = None
     _current_turn: list[object] = field(default_factory=list)
 
@@ -166,6 +169,7 @@ class _FakeSDKClient:
 
     async def receive_messages(self) -> AsyncIterator[object]:
         self.receive_messages_calls += 1
+        self.receive_messages_started.set()
         if self.block_event is not None:
             await self.block_event.wait()
         for message in self.notifications:
@@ -214,6 +218,8 @@ async def _run(
     client: _FakeSDKClient,
     *,
     long_running: LongRunningConfig | None,
+    drain_event: asyncio.Event | None = None,
+    interrupt_event: asyncio.Event | None = None,
 ) -> IterationResult:
     policy, _factory = _make_policy(client)
     state = MessageIterationState()
@@ -231,6 +237,8 @@ async def _run(
             "resume {issue_id}: status={status} file={output_file} sum={summary}"
         ),
         hard_timeout_seconds=300.0,
+        drain_event=drain_event,
+        interrupt_event=interrupt_event,
     )
 
 
@@ -503,18 +511,18 @@ class _RecordingSink(BaseEventSink):
 
 
 @pytest.mark.asyncio
-async def test_drain_interrupts_wait_and_emits_progress(
+async def test_abort_interrupts_wait_and_emits_progress(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The 1st Ctrl-C (drain) breaks the wait promptly; progress is emitted.
+    """The 2nd Ctrl-C (abort) breaks the wait promptly; progress is emitted.
 
     ``receive_messages`` blocks forever (the real "notification never arrives"
     hang). With no fix the iteration would block until ``max_wait_seconds``.
-    Here the wait emits periodic progress (so it is not silent) and a drain
-    signal ends it, proceeding to the gate as success without a resume.
+    Here the wait emits periodic progress (so it is not silent) and an abort
+    signal returns control without a resume for runner-level interruption.
     """
     monkeypatch.setattr(idle_retry_policy, "BACKGROUND_WAIT_PROGRESS_INTERVAL", 0.02)
-    drain = asyncio.Event()
+    interrupt = asyncio.Event()
     block = asyncio.Event()  # never set -> receive_messages blocks forever
     client = _FakeSDKClient(
         per_turn_responses=[_launch_turn_events()],
@@ -545,7 +553,7 @@ async def test_drain_interrupts_wait_and_emits_progress(
             long_running=LongRunningConfig(max_wait_seconds=600),
             await_resume_template="resume {issue_id}",
             hard_timeout_seconds=300.0,
-            drain_event=drain,
+            interrupt_event=interrupt,
         )
     )
 
@@ -558,13 +566,53 @@ async def test_drain_interrupts_wait_and_emits_progress(
     assert sink.waits, "expected at least one background-wait progress event"
     assert sink.waits[0][1] == _LAUNCH_TOOL_USE_ID
 
-    # First Ctrl-C (drain) must end the wait promptly.
-    drain.set()
+    # Second Ctrl-C (abort) must end the wait promptly.
+    interrupt.set()
     result = await asyncio.wait_for(task, timeout=2.0)
 
-    assert result.success is True  # proceeds to the gate
+    assert result.success is True  # successful launch-turn handoff to the runner
     assert len(client.queries) == 1  # no resume issued
     assert client.stopped_task_ids == []  # interrupt path leaves teardown to do it
+
+
+@pytest.mark.asyncio
+async def test_drain_allows_background_wait_to_finish() -> None:
+    """Drain arriving mid-wait leaves active background work running."""
+    drain = asyncio.Event()
+    completion_ready = asyncio.Event()
+    client = _FakeSDKClient(
+        per_turn_responses=[_launch_turn_events(), _finalize_turn_events()],
+        notifications=[
+            AgentTaskCompletedEvent(
+                task_id=_TASK_ID,
+                tool_use_id=_LAUNCH_TOOL_USE_ID,
+                status="completed",
+                summary="exit code 0",
+                output_file="/tmp/out.log",
+            ),
+        ],
+        block_event=completion_ready,
+    )
+
+    task = asyncio.create_task(
+        _run(
+            client,
+            long_running=LongRunningConfig(max_wait_seconds=600),
+            drain_event=drain,
+        )
+    )
+    await asyncio.wait_for(client.receive_messages_started.wait(), timeout=1.0)
+
+    drain.set()
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(asyncio.shield(task), timeout=0.01)
+
+    completion_ready.set()
+    result = await asyncio.wait_for(task, timeout=1.0)
+
+    assert result.success is True
+    assert len(client.queries) == 2
+    assert "status=completed" in client.queries[1]
 
 
 @pytest.mark.asyncio

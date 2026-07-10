@@ -122,8 +122,8 @@ class _BgWaitOutcome:
     """Outcome of waiting for a single backgrounded task's completion.
 
     Distinguishes the three terminal states so the wait/resume loop can act
-    appropriately: a completion arrived, the wait was interrupted by a
-    drain/abort signal, or the wait gave up (timeout / stream end).
+    appropriately: a completion arrived, the wait was interrupted by an abort
+    signal, or the wait gave up (timeout / stream end).
     """
 
     completed: AgentTaskCompletedEvent | None = None
@@ -287,11 +287,11 @@ class IdleTimeoutRetryPolicy:
                 ``asyncio.timeout(hard_timeout_seconds)`` so the (possibly
                 multi-hour) background wait is not killed by the per-task
                 timeout. None disables the wrapper.
-            drain_event: Set on the first Ctrl-C (drain). When set during the
-                between-turn background wait, the wait stops promptly (best-effort
-                ``stop_task``) and the iteration proceeds rather than blocking.
-            interrupt_event: Set on abort (second Ctrl-C). Treated like
-                ``drain_event`` for breaking the background wait.
+            drain_event: Set on the first Ctrl-C (drain). Drain mode stops new
+                issue intake but allows active between-turn background and lock
+                waits to finish.
+            interrupt_event: Set on abort (second Ctrl-C). Breaks between-turn
+                background and lock waits promptly.
 
         Returns:
             IterationResult with success status and session ID.
@@ -807,13 +807,15 @@ class IdleTimeoutRetryPolicy:
         ``client.receive_messages()``, resumes the agent on the *same* client
         with the await-resume prompt, and processes the resulting turn.
 
-        The wait is interruptible (``drain_event``/``interrupt_event``) and
-        emits periodic progress so it is never a silent hang. When the wait is
-        interrupted, times out, or the resume-cycle budget is exhausted, the
-        iteration **proceeds to the gate as success** rather than failing — the
-        agent's launch turn succeeded, and the gate re-runs validation and is
-        the real arbiter of whether the backgrounded work produced what the
-        issue needs. Only a genuine *resume-turn* error fails the iteration.
+        The wait is interruptible on abort (``interrupt_event``) and emits
+        periodic progress so it is never a silent hang. Drain mode deliberately
+        leaves active work running so the current issue can finish. Abort returns
+        control to the session runner for interruption handling. On timeout or
+        resume-cycle exhaustion, the iteration **proceeds to the gate as
+        success** rather than failing — the agent's launch turn succeeded, and
+        the gate re-runs validation and is the real arbiter of whether the
+        backgrounded work produced what the issue needs. Only a genuine
+        *resume-turn* error fails the iteration.
         """
         from src.domain.prompts import format_await_resume_prompt
 
@@ -862,12 +864,12 @@ class IdleTimeoutRetryPolicy:
                 )
 
             if outcome.interrupted:
-                # Drain/abort during the wait: stop blocking and proceed. The SDK
-                # client is torn down when this iteration returns (killing the
-                # task's process group), so we do not stop_task here — keeping the
-                # first Ctrl-C responsive matters more than a tidy stop.
+                # Abort during the wait: stop blocking and proceed. The SDK client
+                # is torn down when this iteration returns (killing the task's
+                # process group), so we do not stop_task here.
                 logger.info(
-                    "Session %s: background wait interrupted; proceeding to gate",
+                    "Session %s: background wait interrupted; returning control "
+                    "for abort handling",
                     issue_id,
                 )
                 self._abandon_background_state(state)
@@ -1030,12 +1032,13 @@ class IdleTimeoutRetryPolicy:
         ``client.supports_background_tasks()`` (Claude only), so Amp/Codex never
         reach the same-client resume path.
 
-        On interrupt (drain/abort) or cycle exhaustion the iteration proceeds to
-        the gate as success and the lock-wait state is abandoned, mirroring the
-        background loop. ``asyncio.CancelledError`` is *not* caught here — a
-        parked agent may still hold locks, so a deadlock-victim cancellation
-        must propagate to actually resolve the deadlock (the wait helper cancels
-        its in-flight sub-tasks in ``finally`` before re-raising).
+        Drain mode leaves the park active so the current issue can finish. Abort
+        returns control to the session runner for interruption handling. On cycle
+        exhaustion the iteration proceeds to the gate as success and abandons
+        the lock-wait state. ``asyncio.CancelledError`` is *not* caught here — a
+        parked agent may still hold locks, so a deadlock-victim cancellation must
+        propagate to actually resolve the deadlock (the wait helper cancels its
+        in-flight sub-tasks in ``finally`` before re-raising).
         """
         from src.domain.prompts import format_lock_resume_prompt
 
@@ -1056,10 +1059,11 @@ class IdleTimeoutRetryPolicy:
             )
 
             if interrupted:
-                # Drain/abort during the wait: stop blocking and proceed to the
-                # gate as success, mirroring the background interrupt path.
+                # Abort during the wait: stop blocking and return control so the
+                # session runner can report interruption before lifecycle/gate work.
                 logger.info(
-                    "Session %s: lock wait interrupted; proceeding to gate",
+                    "Session %s: lock wait interrupted; returning control for "
+                    "abort handling",
                     issue_id,
                 )
                 self._abandon_lock_wait_state(state)
@@ -1154,14 +1158,15 @@ class IdleTimeoutRetryPolicy:
         """Poll until ``wait_paths`` are all free, the deadline, or a signal.
 
         Models :meth:`_wait_for_background_completion`: races each
-        ``poll_interval`` sleep against ``drain_event``/``interrupt_event`` so
-        the first Ctrl-C ends the wait promptly, and emits progress on the event
-        sink at the same cadence as the background wait so the park is never a
-        silent hang. ``poll_interval_ms`` (validated ``> 0``) bounds the
-        re-check rate so the predicate is never a tight busy-loop.
+        ``poll_interval`` sleep against ``interrupt_event`` so abort ends the
+        wait promptly, and emits progress on the event sink at the same cadence
+        as the background wait so the park is never a silent hang. Drain mode
+        deliberately keeps the active park running. ``poll_interval_ms``
+        (validated ``> 0``) bounds the re-check rate so the predicate is never a
+        tight busy-loop.
 
         Returns ``(freed, interrupted)``: ``freed`` True when every path became
-        free within ``max_wait_seconds``; ``interrupted`` True when a drain/abort
+        free within ``max_wait_seconds``; ``interrupted`` True when the abort
         signal fired. Both False means the deadline elapsed while still blocked.
 
         ``asyncio.CancelledError`` propagates (the in-flight sleep is cancelled
@@ -1172,7 +1177,11 @@ class IdleTimeoutRetryPolicy:
         next_progress = loop.time() + BACKGROUND_WAIT_PROGRESS_INTERVAL
         poll_interval = lock_wait.poll_interval_ms / 1000.0
 
-        events = [ev for ev in (drain_event, interrupt_event) if ev is not None]
+        # First Ctrl-C enters drain mode: stop accepting new issues while active
+        # ones finish. In particular, do not abandon a parked issue and send its
+        # incomplete turn to the gate. Only abort (second Ctrl-C) breaks the wait.
+        del drain_event
+        events = [interrupt_event] if interrupt_event is not None else []
         signal_tasks = [asyncio.ensure_future(ev.wait()) for ev in events]
         sleep_task: asyncio.Future[object] | None = None
 
@@ -1190,16 +1199,20 @@ class IdleTimeoutRetryPolicy:
                 if now >= deadline:
                     return False, False
                 if sleep_task is None:
-                    sleep_task = asyncio.ensure_future(asyncio.sleep(poll_interval))
+                    sleep_task = cast(
+                        "asyncio.Future[object]",
+                        asyncio.ensure_future(asyncio.sleep(poll_interval)),
+                    )
+                current_sleep_task = sleep_task
                 slice_timeout = min(deadline - now, next_progress - now, poll_interval)
                 slice_timeout = max(slice_timeout, 0.0)
                 done, _pending = await asyncio.wait(
-                    {sleep_task, *signal_tasks},
+                    {current_sleep_task, *signal_tasks},
                     timeout=slice_timeout,
                     return_when=asyncio.FIRST_COMPLETED,
                 )
                 if _interrupted():
-                    sleep_task.cancel()
+                    current_sleep_task.cancel()
                     return False, True
                 if loop.time() >= next_progress:
                     self._emit_lock_wait_progress(
@@ -1210,7 +1223,7 @@ class IdleTimeoutRetryPolicy:
                         loop,
                     )
                     next_progress = loop.time() + BACKGROUND_WAIT_PROGRESS_INTERVAL
-                if sleep_task in done:
+                if current_sleep_task in done:
                     # The poll interval elapsed; re-probe on the next iteration.
                     sleep_task = None
         finally:
@@ -1241,12 +1254,13 @@ class IdleTimeoutRetryPolicy:
     def _abandon_lock_wait_state(state: MessageIterationState) -> None:
         """Drop all pending lock-wait tracking before returning success.
 
-        The interrupt and resume-exhaustion paths give up on a still-parked wait
-        and proceed to the gate. ``MessageIterationState`` is shared across the
-        gate-retry ``execute_iteration`` calls in ``_run_lifecycle_loop``, so a
-        park left in ``pending_lock_waits`` would be re-read by the next turn's
-        lock loop and force another wait. Clearing the parked paths and their
-        in-flight request ids here prevents that stale carry-over.
+        The interrupt path returns control for runner-level abort handling, while
+        resume exhaustion proceeds to the gate. ``MessageIterationState`` is
+        shared across the gate-retry ``execute_iteration`` calls in
+        ``_run_lifecycle_loop``, so a park left in ``pending_lock_waits`` would be
+        re-read by the next turn's lock loop and force another wait. Clearing the
+        parked paths and their in-flight request ids here prevents that stale
+        carry-over.
         """
         state.pending_lock_waits.clear()
         state.lock_wait_request_ids.clear()
@@ -1255,14 +1269,15 @@ class IdleTimeoutRetryPolicy:
     def _abandon_background_state(state: MessageIterationState) -> None:
         """Drop all pending background tracking before returning success.
 
-        The interrupt, wait-timeout, and resume-exhaustion paths give up on a
-        still-pending launch and proceed to the gate. ``MessageIterationState``
-        is shared across the gate-retry ``execute_iteration`` calls in
-        ``_run_lifecycle_loop`` (and is not reset at the top of
-        ``execute_iteration``), so a launch left in ``pending_background_tool_ids``
-        would be re-reported by the next turn and force another wait for a
-        completion that can never arrive on that turn's fresh client. Clearing
-        the launch ids and their metadata here prevents that stale carry-over.
+        The interrupt path returns control for runner-level abort handling;
+        wait-timeout and resume-exhaustion paths proceed to the gate.
+        ``MessageIterationState`` is shared across the gate-retry
+        ``execute_iteration`` calls in ``_run_lifecycle_loop`` (and is not reset
+        at the top of ``execute_iteration``), so a launch left in
+        ``pending_background_tool_ids`` would be re-reported by the next turn and
+        force another wait for a completion that can never arrive on that turn's
+        fresh client. Clearing the launch ids and their metadata here prevents
+        that stale carry-over.
         """
         state.pending_background_tool_ids.clear()
         state.background_task_ids.clear()
@@ -1295,13 +1310,13 @@ class IdleTimeoutRetryPolicy:
 
         Reads the client's continuous (turn-spanning) message stream until an
         ``AgentTaskCompletedEvent`` for ``tool_use_id`` arrives, bounded by
-        ``max_wait_seconds``. The read is raced against ``drain_event`` /
-        ``interrupt_event`` so the first Ctrl-C ends the wait promptly, and
-        periodic progress is emitted on the event sink so the wait is never a
-        silent hang.
+        ``max_wait_seconds``. The read is raced against ``interrupt_event`` so
+        abort ends the wait promptly. Drain mode deliberately allows the active
+        issue to finish. Periodic progress is emitted on the event sink so the
+        wait is never a silent hang.
 
         Returns a :class:`_BgWaitOutcome`: ``completed`` set on success,
-        ``interrupted`` set when a drain/abort signal fired, or both unset on
+        ``interrupted`` set when the abort signal fired, or both unset on
         timeout / stream end. ``task_id`` is captured from the matching
         completion event, falling back to a ``task_started`` event seen for the
         same launch (so the caller can stop the task even without a completion).
@@ -1311,7 +1326,10 @@ class IdleTimeoutRetryPolicy:
         deadline = loop.time() + max_wait_seconds
         next_progress = loop.time() + BACKGROUND_WAIT_PROGRESS_INTERVAL
 
-        events = [ev for ev in (drain_event, interrupt_event) if ev is not None]
+        # Drain stops new issue intake but must not discard the current issue's
+        # backgrounded work. Only abort interrupts an active wait.
+        del drain_event
+        events = [interrupt_event] if interrupt_event is not None else []
         signal_tasks = [asyncio.ensure_future(ev.wait()) for ev in events]
         next_task: asyncio.Future[object] | None = None
         aiter = client.receive_messages().__aiter__()
