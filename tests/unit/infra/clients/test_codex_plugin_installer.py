@@ -757,6 +757,7 @@ def test_write_codex_plugin_config_writes_all_preconditions(
     assert "plugins = true" in rendered
     assert "plugin_hooks = true" in rendered
     assert "hooks = true" in rendered
+    assert "remote_plugin = false" in rendered
     assert '[marketplaces."local"]' in rendered
     assert 'source_type = "local"' in rendered
     assert f'source = "{codex_home}"' in rendered
@@ -830,20 +831,22 @@ def test_write_codex_plugin_config_reaches_fixed_point(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
-def test_write_codex_plugin_config_preserves_unrelated_features(
+def test_write_codex_plugin_config_disables_remote_and_preserves_unrelated_features(
     tmp_path: Path,
 ) -> None:
-    """A pre-existing ``[features]`` key is preserved across the rewrite."""
+    """Remote discovery is disabled while unrelated features are preserved."""
     codex_home = tmp_path / "codex-home"
     codex_home.mkdir()
     (codex_home / "config.toml").write_text(
-        "[features]\nremote_plugin = true\n", encoding="utf-8"
+        "[features]\nremote_plugin = true\nexperimental_api = true\n",
+        encoding="utf-8",
     )
 
     _write_codex_plugin_config(codex_home=codex_home)
 
     rendered = (codex_home / "config.toml").read_text(encoding="utf-8")
-    assert "remote_plugin = true" in rendered
+    assert "remote_plugin = false" in rendered
+    assert "experimental_api = true" in rendered
     assert "plugins = true" in rendered
     assert "plugin_hooks = true" in rendered
     assert "hooks = true" in rendered

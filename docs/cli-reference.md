@@ -297,9 +297,11 @@ writes a minimal local marketplace manifest under
 following entries to the temporary `config.toml` so Codex loads and trusts the
 bundled `mala-safety` plugin without an interactive prompt:
 
-- `[features]` with `plugins = true`, `plugin_hooks = true`, and `hooks = true`
-  (the three feature gates that must all be on for plugin-bundled hooks to be
-  discovered, registered, and executed).
+- `[features]` with `plugins = true`, `plugin_hooks = true`, `hooks = true`,
+  and `remote_plugin = false` (the three feature gates that must all be on for
+  plugin-bundled hooks to be discovered, registered, and executed, plus an
+  explicit opt-out from remote marketplace synchronization so the isolated
+  worker's local `plugin/list` safety probe cannot stall on network activity).
 - `[marketplaces."local"]` with `source_type = "local"` and `source` pointing
   at the temporary `CODEX_HOME` (so Codex enumerates the isolated local
   marketplace manifest).

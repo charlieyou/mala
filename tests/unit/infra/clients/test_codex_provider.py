@@ -1146,7 +1146,7 @@ def test_isolated_codex_home_strips_user_plugins_hooks_and_shell_env(
     assert "cerberus" not in isolated_config
     assert "CERBERUS_ROOT" not in isolated_config
     assert "notify" not in isolated_config
-    assert "remote_plugin" not in isolated_config
+    assert "remote_plugin = false" in isolated_config
     assert "[mcp_servers" not in isolated_config
     assert ":stop:0:0" not in isolated_config
     assert "CERBERUS_ROOT" in user_config.read_text(encoding="utf-8")
@@ -1571,12 +1571,12 @@ def test_install_prerequisites_does_not_inherit_existing_user_features_block(
     fake_mcp_factory: Callable[..., dict[str, object]],
     tmp_path: Path,
 ) -> None:
-    """The isolated worker config writes only Mala's required feature gates.
+    """The isolated worker config writes only Mala's required feature settings.
 
     User feature flags can enable local experiments, plugin systems, or
     hook behavior unrelated to Mala. The sanitized seed drops the user's
-    ``[features]`` table, and the install step recreates only the three
-    gates needed for the bundled ``mala-safety`` hook.
+    ``[features]`` table, and the install step recreates only the settings
+    needed for the bundled ``mala-safety`` hook and local marketplace.
     """
     codex_home, bin_dir = fake_codex_env
     _install_fake_sdk(monkeypatch, present=True)
@@ -1593,11 +1593,11 @@ def test_install_prerequisites_does_not_inherit_existing_user_features_block(
 
     isolated_home = _provider_isolated_codex_home(provider)
     config_toml = (isolated_home / "config.toml").read_text(encoding="utf-8")
-    # Only Mala's required gates are present inside [features].
+    # Only Mala's required settings are present inside [features].
     assert "plugins = true" in config_toml
     assert "plugin_hooks = true" in config_toml
     assert "hooks = true" in config_toml
-    assert "remote_plugin" not in config_toml
+    assert "remote_plugin = false" in config_toml
     assert (codex_home / "config.toml").read_text(encoding="utf-8") == (
         "[features]\nplugins = true\nremote_plugin = false\n"
     )

@@ -671,6 +671,14 @@ def _write_codex_plugin_config(
     rewritten = _ensure_key_in_section(
         rewritten, section_header="[features]", key="hooks", value="true"
     )
+    # 1d. Disable Codex's remote plugin catalog in the isolated worker home.
+    # Codex 0.144 enables this by default, making ``plugin/list`` contact
+    # ChatGPT and synchronize remote bundles before returning. Mala installs
+    # only its bundled local safety plugin here; remote discovery is both
+    # unnecessary and capable of stalling the fail-closed live probe.
+    rewritten = _ensure_key_in_section(
+        rewritten, section_header="[features]", key="remote_plugin", value="false"
+    )
     # 2. Ensure the local marketplace exists so Codex's plugin/list
     # enumerates the marketplace manifest inside this isolated CODEX_HOME.
     rewritten = _ensure_key_in_section(
