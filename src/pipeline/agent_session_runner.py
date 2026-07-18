@@ -106,6 +106,7 @@ def _is_stale_session_error(exc: Exception) -> bool:
     - SessionNotFoundError or InvalidSessionError (if SDK defines these)
     - HTTP 404/410 response errors wrapped in SDK exceptions
     - Any error with "session" + "not found"/"invalid"/"expired" in message
+    - Codex app-server's "no rollout found for thread id" error
 
     Note: This heuristic may catch some auth-related errors if they mention
     "session expired". This is acceptable as the fallback behavior (retry
@@ -116,6 +117,8 @@ def _is_stale_session_error(exc: Exception) -> bool:
         return True
 
     msg = str(exc).lower()
+    if "no rollout found for thread id" in msg:
+        return True
     if "session" in msg:
         stale_keywords = ("not found", "invalid", "expired", "404", "410")
         if any(kw in msg for kw in stale_keywords):

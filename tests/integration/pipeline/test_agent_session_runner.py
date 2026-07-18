@@ -3713,9 +3713,13 @@ class TestResumeSessionId:
             drain_event: object = None,
             interrupt_event: object = None,
         ) -> None:
-            # First call with resume - raise stale session error
+            # First call with resume - raise the error returned by Codex
+            # app-server when its persistent rollout is no longer available.
             if input.resume_session_id:
-                raise Exception("Session stale-session-id not found (404)")
+                raise Exception(
+                    "JSON-RPC error -32600: no rollout found for thread id "
+                    "stale-session-id"
+                )
             # Second call (without resume) - call original
             await original_lifecycle(input, session_cfg, state, tracer)
 
